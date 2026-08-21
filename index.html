@@ -58,7 +58,8 @@
       ? '<span class="badge badge-success">success</span>'
       : '<span class="badge badge-failed">failed</span>';
     box.innerHTML = `
-      <p>${badge} — last run at ${new Date(s.last_run_at).toLocaleString()}</p>
+      <p>${badge} — last run at ${formatUTC(s.last_run_at)}</p>
+      <p class="muted" style="margin-top:-8px;">(${new Date(s.last_run_at).toLocaleString()} local)</p>
       ${s.last_run_status === 'success' ? '<p class="muted">' + (s.last_run_change_count ?? 0) + ' <em>new</em> change(s) added by this run (duplicates already on file from earlier runs are not re-counted — see the table below for everything currently within the last 24h).</p>' : ''}
       ${s.last_run_error ? '<div class="err-box">' + escapeHtml(s.last_run_error) + '</div>' : ''}
     `;
@@ -82,14 +83,15 @@
     box.innerHTML = `
       <p class="muted" style="margin-top:0;">${data.changes.length} total changes detected in last 24h</p>
       <table>
-        <thead><tr><th>Detected</th><th>Updated (SE)</th><th>UUID</th><th>Start</th><th>Location</th><th>Home</th><th>Away</th></tr></thead>
+        <thead><tr><th>Detected (UTC)</th><th>Updated SE (UTC)</th><th>UUID</th><th>Start (UTC)</th><th>Start (Eastern)</th><th>Location</th><th>Home</th><th>Away</th></tr></thead>
         <tbody>
           ${data.changes.map(c => `
             <tr>
-              <td>${new Date(c.detected_at).toLocaleString()}</td>
-              <td>${c.se_updated_at ? new Date(c.se_updated_at).toLocaleString() : ''}</td>
+              <td>${formatUTC(c.detected_at)}</td>
+              <td>${formatUTC(c.se_updated_at)}</td>
               <td style="font-size:11px;">${escapeHtml(c.event_id)}</td>
-              <td>${c.start_time ? new Date(c.start_time).toLocaleString() : ''}</td>
+              <td>${formatUTC(c.start_time)}</td>
+              <td>${formatEastern(c.start_time)}</td>
               <td>${escapeHtml(c.location_name || '')}</td>
               <td>${escapeHtml(c.home_team || '')}</td>
               <td>${escapeHtml(c.away_team || '')}</td>
@@ -139,6 +141,18 @@
       triggerBtn.disabled = false;
       clearBtn.textContent = 'Clear & Re-poll';
     }
+  }
+
+  function formatUTC(isoString) {
+    if (!isoString) return '';
+    const d = new Date(isoString);
+    return d.toLocaleString('en-US', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' UTC';
+  }
+
+  function formatEastern(isoString) {
+    if (!isoString) return '';
+    const d = new Date(isoString);
+    return d.toLocaleString('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
   }
 
   function escapeHtml(str) {

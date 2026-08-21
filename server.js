@@ -213,7 +213,7 @@ function extractGameInfo(event) {
   const home = teams.find((t) => t.homeTeam === true);
   const away = teams.find((t) => t.homeTeam === false);
   const subvenue = event.subvenue || {};
-  const locationName = [subvenue.name, subvenue.venueName].filter(Boolean).join(', ') || null;
+  const locationName = [subvenue.venueName, subvenue.name].filter(Boolean).join(' - ') || null;
   return {
     eventId: event.id,
     startTime: event.start || null,
@@ -238,23 +238,34 @@ function csvEscape(val) {
   return str;
 }
 
-function formatDateTimeParts(isoString) {
+function formatUTCParts(isoString) {
+  if (!isoString) return { date: '', time: '' };
+  const d = new Date(isoString);
+  const date = d.toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const time = d.toLocaleTimeString('en-US', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' }) + ' UTC';
+  return { date, time };
+}
+
+function formatEasternParts(isoString) {
   if (!isoString) return { date: '', time: '' };
   const d = new Date(isoString);
   const date = d.toLocaleDateString('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
-  const time = d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' });
+  const time = d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
   return { date, time };
 }
 
 function generateCsv(changes) {
-  const header = ['UUID', 'Date', 'Time', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Away Team'];
+  const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Away Team'];
   const lines = [header.join(',')];
   for (const c of changes) {
-    const { date, time } = formatDateTimeParts(c.start_time);
+    const utc = formatUTCParts(c.start_time);
+    const eastern = formatEasternParts(c.start_time);
     lines.push([
       csvEscape(c.event_id),
-      csvEscape(date),
-      csvEscape(time),
+      csvEscape(utc.date),
+      csvEscape(utc.time),
+      csvEscape(eastern.date),
+      csvEscape(eastern.time),
       csvEscape(c.location_name),
       csvEscape(c.subvenue_id),
       csvEscape(c.venue_id),
