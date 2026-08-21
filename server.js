@@ -212,10 +212,14 @@ function extractGameInfo(event) {
   const teams = event.eventTeams || [];
   const home = teams.find((t) => t.homeTeam === true);
   const away = teams.find((t) => t.homeTeam === false);
+  const subvenue = event.subvenue || {};
+  const locationName = [subvenue.name, subvenue.venueName].filter(Boolean).join(', ') || null;
   return {
     eventId: event.id,
     startTime: event.start || null,
-    locationName: (event.subvenue && event.subvenue.name) || null,
+    locationName,
+    subvenueId: event.subvenueId || null,
+    venueId: subvenue.venueId || null,
     homeTeam: (home && home.name) || null,
     awayTeam: (away && away.name) || null,
     seUpdatedAt: event.updated || null,
@@ -243,7 +247,7 @@ function formatDateTimeParts(isoString) {
 }
 
 function generateCsv(changes) {
-  const header = ['UUID', 'Date', 'Time', 'Location', 'Home Team', 'Away Team'];
+  const header = ['UUID', 'Date', 'Time', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Away Team'];
   const lines = [header.join(',')];
   for (const c of changes) {
     const { date, time } = formatDateTimeParts(c.start_time);
@@ -252,6 +256,8 @@ function generateCsv(changes) {
       csvEscape(date),
       csvEscape(time),
       csvEscape(c.location_name),
+      csvEscape(c.subvenue_id),
+      csvEscape(c.venue_id),
       csvEscape(c.home_team),
       csvEscape(c.away_team),
     ].join(','));
@@ -315,11 +321,11 @@ async function runPoll() {
     if (updatedAt <= since) continue; // not updated in the last 24h
 
     const result = await pool.query(
-      `INSERT INTO schedule_changes (event_id, start_time, location_name, home_team, away_team, se_updated_at, se_created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, se_updated_at, se_created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (event_id, start_time, location_name, home_team, away_team) DO NOTHING
        RETURNING id`,
-      [info.eventId, info.startTime, info.locationName, info.homeTeam, info.awayTeam, info.seUpdatedAt, info.seCreatedAt]
+      [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.seUpdatedAt, info.seCreatedAt]
     );
     if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
   }
@@ -391,6 +397,25 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       });
+    return;
+  }
+
+  // POST /clear-and-repoll — testing convenience: wipes the entire change
+  // log, then immediately runs a fresh poll. Destructive and irreversible -
+  // the frontend confirms with the user before ever calling this.
+  if (req.method === 'POST' && url.pathname === '/clear-and-repoll') {
+    (async () => {
+      try {
+        await pool.query('TRUNCATE schedule_changes');
+        console.log('[clear-and-repoll] schedule_changes truncated, running fresh poll...');
+        await runPoll();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    })();
     return;
   }
 
