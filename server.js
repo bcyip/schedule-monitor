@@ -150,7 +150,7 @@ const EVENTS_QUERY = `
     events(organizationId: $orgId, from: $from, to: $to, calendarEventType: GAME, page: $page, perPage: $perPage) {
       results {
         id
-        eventTeams { name team { program { primaryName } divisionId } homeTeam }
+        eventTeams { name team { id program { primaryName } divisionId } homeTeam }
         start
         subvenue { name venueId venueName }
         subvenueId
@@ -224,6 +224,8 @@ function extractGameInfo(event) {
     venueId: subvenue.venueId || null,
     homeTeam: (home && home.name) || null,
     awayTeam: (away && away.name) || null,
+    homeTeamId: (home && home.team && home.team.id) || null,
+    awayTeamId: (away && away.team && away.team.id) || null,
     seUpdatedAt: event.updated || null,
     seCreatedAt: event.created || null,
   };
@@ -257,7 +259,7 @@ function formatEasternParts(isoString) {
 }
 
 function generateCsv(changes) {
-  const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Away Team'];
+  const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
   const lines = [header.join(',')];
   for (const c of changes) {
     const utc = formatUTCParts(c.start_time);
@@ -272,7 +274,9 @@ function generateCsv(changes) {
       csvEscape(c.subvenue_id),
       csvEscape(c.venue_id),
       csvEscape(c.home_team),
+      csvEscape(c.home_team_id),
       csvEscape(c.away_team),
+      csvEscape(c.away_team_id),
     ].join(','));
   }
   return lines.join('\n');
@@ -334,11 +338,11 @@ async function runPoll() {
     if (updatedAt <= since) continue; // not updated in the last 24h
 
     const result = await pool.query(
-      `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, se_updated_at, se_created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, home_team_id, away_team_id, se_updated_at, se_created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (event_id, start_time, location_name, home_team, away_team) DO NOTHING
        RETURNING id`,
-      [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.seUpdatedAt, info.seCreatedAt]
+      [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.homeTeamId, info.awayTeamId, info.seUpdatedAt, info.seCreatedAt]
     );
     if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
   }
