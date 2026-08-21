@@ -320,13 +320,31 @@ async function runPoll() {
 
   let changeCount = 0;
 
+  const DEBUG_EVENT_ID = process.env.DEBUG_EVENT_ID || null;
+
   for (const event of events) {
     const info = extractGameInfo(event);
     if (!info.eventId || !info.seUpdatedAt) continue;
 
     const updatedAt = new Date(info.seUpdatedAt);
-    if (updatedAt <= lastPollTime) continue; // not updated since our last check
-    if (!isGenuineEdit(info)) continue; // looks like a new game, not an edit to an existing one
+    const notRecentEnough = updatedAt <= lastPollTime;
+    const notGenuineEdit = !notRecentEnough && !isGenuineEdit(info);
+
+    if (DEBUG_EVENT_ID && info.eventId === DEBUG_EVENT_ID) {
+      console.log('[DEBUG]', JSON.stringify({
+        eventId: info.eventId,
+        raw_updated: info.seUpdatedAt,
+        raw_created: info.seCreatedAt,
+        parsed_updatedAt: updatedAt.toISOString(),
+        lastPollTime: lastPollTime.toISOString(),
+        notRecentEnough,
+        notGenuineEdit,
+        gapMinutes: info.seCreatedAt ? (updatedAt.getTime() - new Date(info.seCreatedAt).getTime()) / 60000 : null,
+      }, null, 2));
+    }
+
+    if (notRecentEnough) continue; // not updated since our last check
+    if (notGenuineEdit) continue; // looks like a new game, not an edit to an existing one
 
     const result = await pool.query(
       `INSERT INTO schedule_changes (event_id, start_time, location_name, home_team, away_team, se_updated_at, se_created_at)
