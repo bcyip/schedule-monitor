@@ -18,7 +18,10 @@
 //   SE_CLIENT_ID, SE_CLIENT_SECRET, SE_REFRESH_TOKEN, SE_ORG_ID - same as the other apps
 //   DATABASE_URL              - the schedule monitor's OWN Supabase Postgres instance
 //   POLL_INTERVAL_HOURS       - (optional) defaults to 8 (3x/day)
-//   POLL_WINDOW_DAYS          - (optional) defaults to 120 - how far forward to poll from today
+//   SEASON_END_DATE           - (optional but preferred) e.g. "2026-11-15" - polls exactly
+//                                through the real season end, never drifting past it or
+//                                falling short. Takes priority over POLL_WINDOW_DAYS if set.
+//   POLL_WINDOW_DAYS          - (optional) fallback only, used if SEASON_END_DATE isn't set - defaults to 100
 //   NEW_GAME_THRESHOLD_MINUTES - (optional) defaults to 5 - gap between created/updated
 //                                 below which a game is treated as "new", not "edited"
 //   PORT                      - usually set automatically by the host
@@ -36,7 +39,8 @@ const SE_CLIENT_SECRET = process.env.SE_CLIENT_SECRET;
 const SE_REFRESH_TOKEN = process.env.SE_REFRESH_TOKEN;
 const SE_ORG_ID = parseInt(process.env.SE_ORG_ID, 10);
 const POLL_INTERVAL_HOURS = parseFloat(process.env.POLL_INTERVAL_HOURS || '8');
-const POLL_WINDOW_DAYS = parseInt(process.env.POLL_WINDOW_DAYS || '120', 10);
+const POLL_WINDOW_DAYS = parseInt(process.env.POLL_WINDOW_DAYS || '100', 10); // fallback only - covers this season's Nov 15, 2026 end (87 days out as of Aug 20) with real margin
+const SEASON_END_DATE = process.env.SEASON_END_DATE || null; // e.g. "2026-11-15" - preferred over POLL_WINDOW_DAYS
 
 // ---------- Postgres ----------
 
@@ -153,7 +157,9 @@ const EVENTS_QUERY = `
 
 async function fetchFullSchedule() {
   const from = new Date().toISOString();
-  const to = new Date(Date.now() + POLL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const to = SEASON_END_DATE
+    ? new Date(SEASON_END_DATE + 'T23:59:59.999Z').toISOString()
+    : new Date(Date.now() + POLL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   let allEvents = [];
   let page = 1;
@@ -395,7 +401,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, async () => {
   console.log(`Schedule monitor running on port ${PORT}`);
-  console.log(`Poll interval: every ${POLL_INTERVAL_HOURS} hours, window: next ${POLL_WINDOW_DAYS} days`);
+  console.log(`Poll interval: every ${POLL_INTERVAL_HOURS} hours, window: ${SEASON_END_DATE ? 'through ' + SEASON_END_DATE : 'next ' + POLL_WINDOW_DAYS + ' days'}`);
   if (!process.env.DATABASE_URL) {
     console.warn('WARNING: no DATABASE_URL set.');
   } else {

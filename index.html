@@ -34,8 +34,8 @@
 
   <div class="card">
     <div style="display:flex; align-items:center; justify-content:space-between;">
-      <h3 style="margin:0;">Recent Changes</h3>
-      <a href="/changes.csv" class="muted">Download CSV</a>
+      <h3 style="margin:0;">Changes Detected — Last 24 Hours</h3>
+      <a href="#" id="csvLink" class="muted">Download CSV</a>
     </div>
     <div id="changesBox">Loading...</div>
   </div>
@@ -62,20 +62,23 @@
   }
 
   async function loadChanges() {
-    const res = await fetch('/changes');
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    document.getElementById('csvLink').href = '/changes.csv?since=' + encodeURIComponent(since);
+    const res = await fetch('/changes?since=' + encodeURIComponent(since));
     const data = await res.json();
     const box = document.getElementById('changesBox');
     if (!data.changes || data.changes.length === 0) {
-      box.innerHTML = '<p class="muted">No changes recorded yet.</p>';
+      box.innerHTML = '<p class="muted">No changes detected in the last 24 hours.</p>';
       return;
     }
     box.innerHTML = `
       <table>
-        <thead><tr><th>Detected</th><th>UUID</th><th>Start</th><th>Location</th><th>Home</th><th>Away</th></tr></thead>
+        <thead><tr><th>Detected</th><th>Updated (SE)</th><th>UUID</th><th>Start</th><th>Location</th><th>Home</th><th>Away</th></tr></thead>
         <tbody>
           ${data.changes.map(c => `
             <tr>
               <td>${new Date(c.detected_at).toLocaleString()}</td>
+              <td>${c.se_updated_at ? new Date(c.se_updated_at).toLocaleString() : ''}</td>
               <td style="font-size:11px;">${escapeHtml(c.event_id)}</td>
               <td>${c.start_time ? new Date(c.start_time).toLocaleString() : ''}</td>
               <td>${escapeHtml(c.location_name || '')}</td>
