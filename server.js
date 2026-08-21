@@ -1,18 +1,24 @@
 // USCCS Schedule Change Monitor
 //
 // Polls SportsEngine's full game schedule on a schedule (default 3x/day)
-// and records any game whose `updated` timestamp is newer than our last
-// successful poll AND meaningfully later than its own `created` timestamp
-// (distinguishing a genuine edit to an existing game from a brand-new game
-// simply being added - both have a "recent update", only one is a real
-// change worth reporting).
+// and records any game whose `updated` timestamp falls within the last 24
+// hours - recomputed fresh on every run (not "since last poll").
 //
-// State is deliberately minimal: just ONE timestamp (when we last
-// successfully polled) plus a durable, growing log of every individual
-// change ever detected (date/time/location/home/away). Each change is
-// recorded exactly once, ever - a UNIQUE constraint + ON CONFLICT DO
-// NOTHING guarantees the same change can never be inserted twice, even if
-// a poll window is ever reprocessed.
+// KNOWN, DELIBERATE TRADEOFF (see conversation): SportsEngine's `updated`
+// timestamp on an event also moves for reasons unrelated to
+// date/time/location - most likely team/roster changes cascading onto the
+// event object. This means some reported "changes" will be false
+// positives where the actual schedule didn't move. A field-level diffing
+// approach (comparing actual start_time/location_name against a stored
+// snapshot) would eliminate this, but was deliberately not used here in
+// favor of simplicity.
+//
+// Durable log: every detected change accumulates in schedule_changes. A
+// UNIQUE constraint + ON CONFLICT DO NOTHING guarantees the exact same
+// (event_id, start_time, location_name, home_team, away_team) combination
+// is never recorded twice, even though the fixed 24h window means the same
+// still-recent game gets re-evaluated on every subsequent poll within that
+// window.
 //
 // REQUIRED ENVIRONMENT VARIABLES:
 //   SE_CLIENT_ID, SE_CLIENT_SECRET, SE_REFRESH_TOKEN, SE_ORG_ID - same as the other apps
@@ -22,8 +28,6 @@
 //                                through the real season end, never drifting past it or
 //                                falling short. Takes priority over POLL_WINDOW_DAYS if set.
 //   POLL_WINDOW_DAYS          - (optional) fallback only, used if SEASON_END_DATE isn't set - defaults to 100
-//   NEW_GAME_THRESHOLD_MINUTES - (optional) defaults to 5 - gap between created/updated
-//                                 below which a game is treated as "new", not "edited"
 //   PORT                      - usually set automatically by the host
 
 const http = require('http');
@@ -189,7 +193,7 @@ async function fetchFullSchedule() {
   let page = 1;
   let totalPages = 1;
   const PER_PAGE = parseInt(process.env.EVENTS_PER_PAGE || '40', 10); // 100/page hit "complexity 201, max 101" - roughly 2 complexity/game, so 40 leaves real margin under the ~50 edge
-  const PAGE_DELAY_MS = parseInt(process.env.PAGE_DELAY_MS || '400', 10); // small gap between requests, to avoid hammering SportsEngine's API in rapid succession
+  const PAGE_DELAY_MS = parseInt(process.env.PAGE_DELAY_MS || '1000', 10); // bumped from 400ms after hitting confirmed TOO_MANY_REQUESTS from SportsEngine
 
   do {
     const data = await callGraphQLWithRetry(EVENTS_QUERY, { orgId: SE_ORG_ID, from, to, page, perPage: PER_PAGE });
@@ -255,39 +259,14 @@ function generateCsv(changes) {
   return lines.join('\n');
 }
 
-// A game whose `updated` sits only moments after its `created` is a brand
-// new addition, not an edit - its "recent update" is just the creation
-// itself. Only report it as a change if updated is meaningfully later than
-// created (default 5 minutes - configurable, since this is a judgment call
-// about what "meaningfully later" means for SportsEngine's own timestamps).
-const NEW_GAME_THRESHOLD_MS = parseInt(process.env.NEW_GAME_THRESHOLD_MINUTES || '5', 10) * 60_000;
+// ---------- Poll run status tracking (for the status UI) ----------
 
-function isGenuineEdit(info) {
-  if (!info.seUpdatedAt || !info.seCreatedAt) return true; // can't tell - err toward reporting it
-  const updated = new Date(info.seUpdatedAt).getTime();
-  const created = new Date(info.seCreatedAt).getTime();
-  return (updated - created) > NEW_GAME_THRESHOLD_MS;
-}
-
-// ---------- Poll state (single row: last successful poll time) ----------
-
-async function getLastPollTime() {
-  const result = await pool.query('SELECT last_poll_time FROM poll_state WHERE id = 1');
-  if (result.rowCount === 0 || !result.rows[0].last_poll_time) {
-    // No prior successful poll recorded - fall back to a generous window
-    // rather than ever looking back forever or not at all.
-    return new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  }
-  return new Date(result.rows[0].last_poll_time);
-}
-
-async function setLastPollTime(time, changeCount) {
+async function recordPollSuccess(changeCount) {
   await pool.query(
-    `INSERT INTO poll_state (id, last_poll_time, last_run_at, last_run_status, last_run_error, last_run_change_count)
-     VALUES (1, $1, now(), 'success', NULL, $2)
-     ON CONFLICT (id) DO UPDATE SET last_poll_time = EXCLUDED.last_poll_time, last_run_at = now(),
-       last_run_status = 'success', last_run_error = NULL, last_run_change_count = EXCLUDED.last_run_change_count`,
-    [time, changeCount]
+    `INSERT INTO poll_state (id, last_run_at, last_run_status, last_run_error, last_run_change_count)
+     VALUES (1, now(), 'success', NULL, $1)
+     ON CONFLICT (id) DO UPDATE SET last_run_at = now(), last_run_status = 'success', last_run_error = NULL, last_run_change_count = EXCLUDED.last_run_change_count`,
+    [changeCount]
   );
 }
 
@@ -301,50 +280,39 @@ async function recordPollFailure(errorMessage) {
 }
 
 // ---------- Poll cycle ----------
+//
+// Simple, fixed rolling window: on every run, fetch the full schedule and
+// record any game whose SportsEngine `updated` timestamp falls within the
+// last 24 hours - recomputed fresh each time, not "since last poll." No
+// snapshot, no field-level diffing.
+//
+// KNOWN TRADEOFF (deliberate, see conversation): `updated` also moves for
+// reasons unrelated to date/time/location - e.g. roster changes cascading
+// onto the event object - so this WILL report some false positives when
+// that happens. Chosen deliberately over field-diffing for simplicity.
 
 async function runPoll() {
   console.log('[poll] Starting schedule poll...');
-  const pollStartedAt = new Date(); // recorded BEFORE fetching, so nothing changed during this run is ever missed by the next one
-  const lastPollTime = await getLastPollTime();
-  console.log('[poll] Looking for changes updated since', lastPollTime.toISOString());
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   let events;
   try {
     events = await fetchFullSchedule();
   } catch (err) {
-    console.error('[poll] Failed to fetch schedule - NOT advancing last_poll_time, will retry the same window next run:', err.message);
+    console.error('[poll] Failed to fetch schedule:', err.message);
     await recordPollFailure(err.message);
     return;
   }
-  console.log(`[poll] Fetched ${events.length} total games. Filtering for genuine recent edits...`);
+  console.log(`[poll] Fetched ${events.length} total games. Filtering for updated within the last 24h (since ${since.toISOString()})...`);
 
   let changeCount = 0;
-
-  const DEBUG_EVENT_ID = process.env.DEBUG_EVENT_ID || null;
 
   for (const event of events) {
     const info = extractGameInfo(event);
     if (!info.eventId || !info.seUpdatedAt) continue;
 
     const updatedAt = new Date(info.seUpdatedAt);
-    const notRecentEnough = updatedAt <= lastPollTime;
-    const notGenuineEdit = !notRecentEnough && !isGenuineEdit(info);
-
-    if (DEBUG_EVENT_ID && info.eventId === DEBUG_EVENT_ID) {
-      console.log('[DEBUG]', JSON.stringify({
-        eventId: info.eventId,
-        raw_updated: info.seUpdatedAt,
-        raw_created: info.seCreatedAt,
-        parsed_updatedAt: updatedAt.toISOString(),
-        lastPollTime: lastPollTime.toISOString(),
-        notRecentEnough,
-        notGenuineEdit,
-        gapMinutes: info.seCreatedAt ? (updatedAt.getTime() - new Date(info.seCreatedAt).getTime()) / 60000 : null,
-      }, null, 2));
-    }
-
-    if (notRecentEnough) continue; // not updated since our last check
-    if (notGenuineEdit) continue; // looks like a new game, not an edit to an existing one
+    if (updatedAt <= since) continue; // not updated in the last 24h
 
     const result = await pool.query(
       `INSERT INTO schedule_changes (event_id, start_time, location_name, home_team, away_team, se_updated_at, se_created_at)
@@ -356,7 +324,7 @@ async function runPoll() {
     if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
   }
 
-  await setLastPollTime(pollStartedAt, changeCount);
+  await recordPollSuccess(changeCount);
   console.log(`[poll] Done. ${changeCount} new change(s) recorded (duplicates, if any, were skipped).`);
 }
 

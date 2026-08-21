@@ -55,7 +55,6 @@
       : '<span class="badge badge-failed">failed</span>';
     box.innerHTML = `
       <p>${badge} — last run at ${new Date(s.last_run_at).toLocaleString()}</p>
-      <p class="muted">Filter watermark (last_poll_time): ${s.last_poll_time ? new Date(s.last_poll_time).toLocaleString() : '(none yet)'}</p>
       ${s.last_run_status === 'success' ? '<p class="muted">' + (s.last_run_change_count ?? 0) + ' change(s) recorded on last run.</p>' : ''}
       ${s.last_run_error ? '<div class="err-box">' + escapeHtml(s.last_run_error) + '</div>' : ''}
     `;
