@@ -24,10 +24,13 @@
 //   PORT                      - usually set automatically by the host
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const https = require('https');
 const { Pool } = require('pg');
 
 const PORT = process.env.PORT || 8787;
+const HTML_FILE = path.join(__dirname, 'index.html');
 const SE_CLIENT_ID = process.env.SE_CLIENT_ID;
 const SE_CLIENT_SECRET = process.env.SE_CLIENT_SECRET;
 const SE_REFRESH_TOKEN = process.env.SE_REFRESH_TOKEN;
@@ -155,7 +158,7 @@ async function fetchFullSchedule() {
   let allEvents = [];
   let page = 1;
   let totalPages = 1;
-  const PER_PAGE = 100;
+  const PER_PAGE = parseInt(process.env.EVENTS_PER_PAGE || '40', 10); // 100/page hit "complexity 201, max 101" - roughly 2 complexity/game, so 40 leaves real margin under the ~50 edge
 
   do {
     const data = await callGraphQL(EVENTS_QUERY, { orgId: SE_ORG_ID, from, to, page, perPage: PER_PAGE });
@@ -246,11 +249,22 @@ async function getLastPollTime() {
   return new Date(result.rows[0].last_poll_time);
 }
 
-async function setLastPollTime(time) {
+async function setLastPollTime(time, changeCount) {
   await pool.query(
-    `INSERT INTO poll_state (id, last_poll_time) VALUES (1, $1)
-     ON CONFLICT (id) DO UPDATE SET last_poll_time = EXCLUDED.last_poll_time`,
-    [time]
+    `INSERT INTO poll_state (id, last_poll_time, last_run_at, last_run_status, last_run_error, last_run_change_count)
+     VALUES (1, $1, now(), 'success', NULL, $2)
+     ON CONFLICT (id) DO UPDATE SET last_poll_time = EXCLUDED.last_poll_time, last_run_at = now(),
+       last_run_status = 'success', last_run_error = NULL, last_run_change_count = EXCLUDED.last_run_change_count`,
+    [time, changeCount]
+  );
+}
+
+async function recordPollFailure(errorMessage) {
+  await pool.query(
+    `INSERT INTO poll_state (id, last_run_at, last_run_status, last_run_error)
+     VALUES (1, now(), 'failed', $1)
+     ON CONFLICT (id) DO UPDATE SET last_run_at = now(), last_run_status = 'failed', last_run_error = EXCLUDED.last_run_error`,
+    [errorMessage]
   );
 }
 
@@ -267,6 +281,7 @@ async function runPoll() {
     events = await fetchFullSchedule();
   } catch (err) {
     console.error('[poll] Failed to fetch schedule - NOT advancing last_poll_time, will retry the same window next run:', err.message);
+    await recordPollFailure(err.message);
     return;
   }
   console.log(`[poll] Fetched ${events.length} total games. Filtering for genuine recent edits...`);
@@ -291,14 +306,27 @@ async function runPoll() {
     if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
   }
 
-  await setLastPollTime(pollStartedAt);
+  await setLastPollTime(pollStartedAt, changeCount);
   console.log(`[poll] Done. ${changeCount} new change(s) recorded (duplicates, if any, were skipped).`);
 }
 
 // ---------- Server: query the change log + manual trigger ----------
 
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+
+  // GET /api/status — last poll run's outcome, for the debug UI
+  if (req.method === 'GET' && url.pathname === '/api/status') {
+    try {
+      const result = await pool.query('SELECT * FROM poll_state WHERE id = 1');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: result.rows[0] || null }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
 
   // GET /changes — list recorded changes as JSON, optionally filtered with ?since=<ISO date>
   if (req.method === 'GET' && url.pathname === '/changes') {
@@ -345,6 +373,19 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       });
+    return;
+  }
+
+  // GET / — debug UI: status, manual trigger, recent changes
+  if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+    fs.readFile(HTML_FILE, 'utf8', (err, data) => {
+      if (err) {
+        res.writeHead(404);
+        return res.end('index.html not found — make sure it is in the same folder as server.js');
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(data);
+    });
     return;
   }
 
