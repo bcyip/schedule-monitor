@@ -155,6 +155,30 @@ const EVENTS_QUERY = `
     }
   }`;
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Retries a single page fetch on failure (transient 502s, network blips)
+// before giving up - so one bad page doesn't abandon a poll that had
+// already successfully fetched 20+ other pages.
+async function callGraphQLWithRetry(query, variables, maxAttempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await callGraphQL(query, variables);
+    } catch (err) {
+      lastError = err;
+      console.warn(`[poll] Page fetch attempt ${attempt}/${maxAttempts} failed: ${err.message}`);
+      if (attempt < maxAttempts) {
+        const backoffMs = attempt * 3000; // 3s, 6s, ...
+        await sleep(backoffMs);
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function fetchFullSchedule() {
   const from = new Date().toISOString();
   const to = SEASON_END_DATE
@@ -165,14 +189,16 @@ async function fetchFullSchedule() {
   let page = 1;
   let totalPages = 1;
   const PER_PAGE = parseInt(process.env.EVENTS_PER_PAGE || '40', 10); // 100/page hit "complexity 201, max 101" - roughly 2 complexity/game, so 40 leaves real margin under the ~50 edge
+  const PAGE_DELAY_MS = parseInt(process.env.PAGE_DELAY_MS || '400', 10); // small gap between requests, to avoid hammering SportsEngine's API in rapid succession
 
   do {
-    const data = await callGraphQL(EVENTS_QUERY, { orgId: SE_ORG_ID, from, to, page, perPage: PER_PAGE });
+    const data = await callGraphQLWithRetry(EVENTS_QUERY, { orgId: SE_ORG_ID, from, to, page, perPage: PER_PAGE });
     const pageResults = (data.events && data.events.results) || [];
     allEvents = allEvents.concat(pageResults);
     totalPages = (data.events && data.events.pageInformation && data.events.pageInformation.pages) || 1;
     console.log(`[poll] Fetched page ${page}/${totalPages} (${pageResults.length} events)`);
     page++;
+    if (page <= totalPages) await sleep(PAGE_DELAY_MS);
   } while (page <= totalPages);
 
   return allEvents;
