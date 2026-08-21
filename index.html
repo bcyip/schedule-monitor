@@ -41,6 +41,8 @@
   </div>
 </main>
 <script>
+  let lastKnownRunAt = null; // used to detect when a NEW poll (scheduled or manual) has actually completed
+
   async function loadStatus() {
     const res = await fetch('/api/status');
     const data = await res.json();
@@ -48,7 +50,7 @@
     const box = document.getElementById('statusBox');
     if (!s || !s.last_run_at) {
       box.innerHTML = '<p class="muted">No poll has run yet.</p>';
-      return;
+      return false;
     }
     const badge = s.last_run_status === 'success'
       ? '<span class="badge badge-success">success</span>'
@@ -58,6 +60,11 @@
       ${s.last_run_status === 'success' ? '<p class="muted">' + (s.last_run_change_count ?? 0) + ' change(s) recorded on last run.</p>' : ''}
       ${s.last_run_error ? '<div class="err-box">' + escapeHtml(s.last_run_error) + '</div>' : ''}
     `;
+
+    // A genuinely NEW poll completed (not just the first check on page load)
+    const isNewCompletion = lastKnownRunAt !== null && s.last_run_at !== lastKnownRunAt;
+    lastKnownRunAt = s.last_run_at;
+    return isNewCompletion;
   }
 
   async function loadChanges() {
@@ -112,8 +119,20 @@
     return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   }
 
+  // Initial load: establish the baseline last_run_at (no refresh triggered
+  // by this first check) and show whatever's currently in the table.
   loadStatus();
   loadChanges();
+
+  // Check status periodically - but only refresh the CHANGES TABLE when a
+  // genuinely new poll (scheduled or manual) has actually completed since
+  // the last check, not on every tick regardless of whether anything ran.
+  setInterval(async () => {
+    const pollJustCompleted = await loadStatus();
+    if (pollJustCompleted) {
+      await loadChanges();
+    }
+  }, 60_000);
 </script>
 </body>
 </html>
