@@ -121,7 +121,10 @@
   }
 
   async function clearAndRepoll() {
-    if (!confirm('This permanently deletes ALL recorded changes (not just the last 24h view) and re-polls from scratch. This cannot be undone. Continue?')) return;
+    if (!confirm('⚠️ This will PERMANENTLY DELETE the entire history of detected changes — every row ever recorded, not just what\'s shown in the last 24h view. This cannot be undone.\n\nA fresh poll will then run and start the history over from zero.\n\nAre you sure you want to continue?')) return;
+
+    const password = prompt('Enter the password to confirm this destructive action:');
+    if (password === null) return; // user cancelled
 
     const clearBtn = document.getElementById('clearBtn');
     const triggerBtn = document.getElementById('triggerBtn');
@@ -129,7 +132,11 @@
     triggerBtn.disabled = true;
     clearBtn.textContent = 'Clearing & Polling...';
     try {
-      const res = await fetch('/clear-and-repoll', { method: 'POST' });
+      const res = await fetch('/clear-and-repoll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Unknown error');
       await loadStatus();

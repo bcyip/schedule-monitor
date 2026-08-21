@@ -28,6 +28,8 @@
 //                                through the real season end, never drifting past it or
 //                                falling short. Takes priority over POLL_WINDOW_DAYS if set.
 //   POLL_WINDOW_DAYS          - (optional) fallback only, used if SEASON_END_DATE isn't set - defaults to 100
+//   CLEAR_REPOLL_PASSWORD     - required to use the destructive "Clear & Re-poll"
+//                                action - fails closed (disabled) if unset
 //   PORT                      - usually set automatically by the host
 
 const http = require('http');
@@ -413,12 +415,37 @@ const server = http.createServer(async (req, res) => {
 
   // POST /clear-and-repoll — testing convenience: wipes the entire change
   // log, then immediately runs a fresh poll. Destructive and irreversible -
-  // the frontend confirms with the user before ever calling this.
+  // the frontend confirms with the user AND requires a password before
+  // ever calling this, and the password is verified here too (not just
+  // client-side, which could be trivially bypassed by calling this
+  // endpoint directly). Fails closed: if CLEAR_REPOLL_PASSWORD isn't set
+  // on the deployment, every request is rejected rather than silently
+  // allowing unprotected access.
   if (req.method === 'POST' && url.pathname === '/clear-and-repoll') {
-    (async () => {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', async () => {
+      let payload;
+      try {
+        payload = JSON.parse(body || '{}');
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      }
+
+      const requiredPassword = process.env.CLEAR_REPOLL_PASSWORD;
+      if (!requiredPassword) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'CLEAR_REPOLL_PASSWORD is not configured on the server - this destructive action is disabled until it is set.' }));
+      }
+      if (payload.password !== requiredPassword) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Incorrect password.' }));
+      }
+
       try {
         await pool.query('TRUNCATE schedule_changes');
-        console.log('[clear-and-repoll] schedule_changes truncated, running fresh poll...');
+        console.log('[clear-and-repoll] Password verified. schedule_changes truncated, running fresh poll...');
         await runPoll();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
@@ -426,7 +453,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
-    })();
+    });
     return;
   }
 
