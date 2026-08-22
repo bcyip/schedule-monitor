@@ -145,6 +145,75 @@ async function callGraphQL(query, variables) {
 
 // ---------- Fetching the full schedule (paginated) ----------
 
+// Division ID -> {name, gender} lookup, reused directly from the
+// original stat-tracking app's confirmed DIVISIONS_MEN/DIVISIONS_WOMEN
+// lists (45 Men's + 16 Women's = 61 total, verified earlier in this
+// project) - more reliable than parsing a season name string, and
+// needs no additional GraphQL query fields.
+const DIVISION_LOOKUP = {
+  '6a4439745407815052443199': { name: 'AL/MS', gender: 'Men' },
+  '6a4439745407813fac44341f': { name: 'Baltimore', gender: 'Men' },
+  '6a0c980026aee381f43b3ef0': { name: 'Big Sky', gender: 'Men' },
+  '6a4e96e416115e0153c5de9d': { name: 'Crossroads', gender: 'Men' },
+  '6a44397409f291d00804fde8': { name: 'Florida North', gender: 'Men' },
+  '6a4439744e42a26275c7ff31': { name: 'Florida South', gender: 'Men' },
+  '6a443974b5457c8f19bccbfc': { name: 'Georgia', gender: 'Men' },
+  '6a4e96e4c7769d01229fb5c6': { name: 'Great Lakes', gender: 'Men' },
+  '6a4e96e47d61ac00f01ad8b8': { name: 'Great Lakes II', gender: 'Men' },
+  '6a4e96e4801326012116f744': { name: 'Great Plains', gender: 'Men' },
+  '6a4e96e46b8d1e00ef1ee690': { name: 'Heartland', gender: 'Men' },
+  '6a4e96e416115e0122c5e2c1': { name: 'Heartland II', gender: 'Men' },
+  '6a44397409f291e60904fdda': { name: 'Hudson Valley', gender: 'Men' },
+  '6a443974b5457c54e4bcd12d': { name: 'KY/TN', gender: 'Men' },
+  '6a0cb110cdb76433cc151485': { name: 'Midwest North', gender: 'Men' },
+  '6a0e070026aee3f6e43b446f': { name: 'Midwest North II', gender: 'Men' },
+  '6a0e0700cdb76416601513ae': { name: 'Midwest South', gender: 'Men' },
+  '6a4e96e46b8d1e01201ee2ce': { name: 'Midwest South II', gender: 'Men' },
+  '6a44397409f29192050500f1': { name: 'NC East', gender: 'Men' },
+  '6a4439744e42a29553c7fe6c': { name: 'NC West', gender: 'Men' },
+  '6a4439743c1d137b18c8db12': { name: 'New England Central', gender: 'Men' },
+  '6a443974593ddf505e16a197': { name: 'New England North', gender: 'Men' },
+  '6a44397454078160b344310a': { name: 'New England South', gender: 'Men' },
+  '6a0c980026aee362b23b3f0e': { name: 'NorCal', gender: 'Men' },
+  '6a0c980004d6b0c7a8af73bd': { name: 'NorCal II', gender: 'Men' },
+  '6a0c980098c2fde79e7c20e8': { name: 'Northwest', gender: 'Men' },
+  '6a0e08bbf841cfba91996998': { name: 'Northwoods', gender: 'Men' },
+  '6a0e09e298c2fd5b067c22c4': { name: 'Northwoods II', gender: 'Men' },
+  '6a4439744e42a24ee3c80243': { name: 'NYC', gender: 'Men' },
+  '6a443974b5457c6597bccdad': { name: 'Philly', gender: 'Men' },
+  '6a0e08bb61444a4db0f2ef89': { name: 'Prairie', gender: 'Men' },
+  '6a4e96e48dabb800efcfbce9': { name: 'Red River', gender: 'Men' },
+  '6a4e96e48dabb80151cfb8bd': { name: 'Red River II', gender: 'Men' },
+  '6a4e96e4c7769d00f19fb81b': { name: 'Rocky Mountain', gender: 'Men' },
+  '6a4e96e435cc6d00ef70bd6d': { name: 'Rocky Mountain II', gender: 'Men' },
+  '6a4e96e4c7769d00bc9fbb3f': { name: 'Sabine River', gender: 'Men' },
+  '6a4e96e48dabb80120cfb96d': { name: 'Sabine River II', gender: 'Men' },
+  '6a0c980026aee3a5643b3edf': { name: 'SoCal', gender: 'Men' },
+  '6a0c980098c2fd32fc7c1d07': { name: 'SoCal II', gender: 'Men' },
+  '6a3ed52cf2a55d01e50c59e5': { name: 'SoCal III', gender: 'Men' },
+  '6a4e96e480132600f016f99d': { name: 'Southwest', gender: 'Men' },
+  '6a4e96e4c7769d01539fb593': { name: 'Southwest II', gender: 'Men' },
+  '6a0c9800bc500ed1f8da9d08': { name: 'Utah', gender: 'Men' },
+  '6a443974593ddf60ee169e3f': { name: 'Virginia', gender: 'Men' },
+  '6a44397409f291bc4904fe1b': { name: 'Washington DC', gender: 'Men' },
+  '6a4446b9c3ff52e2d366a921': { name: 'DMV', gender: 'Women' },
+  '6a444639c3ff52b71466af8b': { name: 'FL', gender: 'Women' },
+  '6a0e0a64a70302e718b84569': { name: 'Midwest', gender: 'Women' },
+  '6a0e0a6498c2fd83787c1db1': { name: 'Midwest II', gender: 'Women' },
+  '6a46cdfc06f455aa0cc3badb': { name: 'New England', gender: 'Women' },
+  '6a0c982c61444a4e0cf2efa3': { name: 'NorCal', gender: 'Women' },
+  '6a0c982c61444a7966f2eb9a': { name: 'NorCal II', gender: 'Women' },
+  '6a0c982cf841cf9b0499667d': { name: 'Northwest', gender: 'Women' },
+  '6a0c982c98c2fd32fc7c1d0d': { name: 'Oregon II', gender: 'Women' },
+  '6a4e9b904b609600f0e70d42': { name: 'Ozark', gender: 'Women' },
+  '6a44470e99ca5a7f419d52d3': { name: 'Philly', gender: 'Women' },
+  '6a4e9b6a801326012116f792': { name: 'Rocky Mountain', gender: 'Women' },
+  '6a4e9b6a4b60960121e70967': { name: 'Rocky Mountain II', gender: 'Women' },
+  '6a0c982c98c2fd79027c1c4f': { name: 'SoCal', gender: 'Women' },
+  '6a0c982c8a5826dcee7f909e': { name: 'SoCal II', gender: 'Women' },
+  '6a4e9b6a80132600f016fa7f': { name: 'Southwest', gender: 'Women' },
+};
+
 const EVENTS_QUERY = `
   query Events($orgId: Int!, $from: UTCDateTime!, $to: UTCDateTime!, $page: Int!, $perPage: Int!) {
     events(organizationId: $orgId, from: $from, to: $to, calendarEventType: GAME, page: $page, perPage: $perPage) {
@@ -216,6 +285,14 @@ function extractGameInfo(event) {
   const away = teams.find((t) => t.homeTeam === false);
   const subvenue = event.subvenue || {};
   const locationName = [subvenue.venueName, subvenue.name].filter(Boolean).join(' - ') || null;
+
+  // Division comes from the home team specifically - both teams in a
+  // standard divisional matchup share the same division, but if this is
+  // ever a cross-division/exhibition game, home's division is used as the
+  // representative one for this game.
+  const divisionId = (home && home.team && home.team.divisionId) || (away && away.team && away.team.divisionId) || null;
+  const divisionInfo = divisionId ? DIVISION_LOOKUP[divisionId] : null;
+
   return {
     eventId: event.id,
     startTime: event.start || null,
@@ -226,6 +303,9 @@ function extractGameInfo(event) {
     awayTeam: (away && away.name) || null,
     homeTeamId: (home && home.team && home.team.id) || null,
     awayTeamId: (away && away.team && away.team.id) || null,
+    divisionId,
+    divisionName: (divisionInfo && divisionInfo.name) || null,
+    gender: (divisionInfo && divisionInfo.gender) || null,
     seUpdatedAt: event.updated || null,
     seCreatedAt: event.created || null,
   };
@@ -259,17 +339,23 @@ function formatEasternParts(isoString) {
 }
 
 function generateCsv(changes) {
-  const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
+  const header = ['UUID', 'New Game', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Created (UTC)', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
   const lines = [header.join(',')];
   for (const c of changes) {
     const utc = formatUTCParts(c.start_time);
     const eastern = formatEasternParts(c.start_time);
+    const created = formatUTCParts(c.se_created_at);
     lines.push([
       csvEscape(c.event_id),
+      csvEscape(c.is_new_game ? 'Yes' : 'No'),
       csvEscape(utc.date),
       csvEscape(utc.time),
       csvEscape(eastern.date),
       csvEscape(eastern.time),
+      csvEscape(created.date + ' ' + created.time),
+      csvEscape(c.gender),
+      csvEscape(c.division_name),
+      csvEscape(c.division_id),
       csvEscape(c.location_name),
       csvEscape(c.subvenue_id),
       csvEscape(c.venue_id),
@@ -326,23 +412,31 @@ async function runPoll() {
     await recordPollFailure(err.message);
     return;
   }
-  console.log(`[poll] Fetched ${events.length} total games. Filtering for updated within the last 24h (since ${since.toISOString()})...`);
+  console.log(`[poll] Fetched ${events.length} total games. Filtering for updated OR created within the last 24h (since ${since.toISOString()})...`);
 
   let changeCount = 0;
 
   for (const event of events) {
     const info = extractGameInfo(event);
-    if (!info.eventId || !info.seUpdatedAt) continue;
+    if (!info.eventId) continue;
 
-    const updatedAt = new Date(info.seUpdatedAt);
-    if (updatedAt <= since) continue; // not updated in the last 24h
+    const updatedAt = info.seUpdatedAt ? new Date(info.seUpdatedAt) : null;
+    const createdAt = info.seCreatedAt ? new Date(info.seCreatedAt) : null;
+
+    // Checked independently, not as a replacement for each other - a brand
+    // new game's `updated` may not reliably reflect its creation (e.g. if
+    // it's set via a bulk import/template that doesn't touch `updated` at
+    // that moment), so `created` is a second, separate way to catch it.
+    const updatedRecently = updatedAt && updatedAt > since;
+    const createdRecently = createdAt && createdAt > since;
+    if (!updatedRecently && !createdRecently) continue; // neither signal is recent - skip
 
     const result = await pool.query(
-      `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, home_team_id, away_team_id, se_updated_at, se_created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, home_team_id, away_team_id, division_id, division_name, gender, se_updated_at, se_created_at, is_new_game)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        ON CONFLICT (event_id, start_time, location_name, home_team, away_team) DO NOTHING
        RETURNING id`,
-      [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.homeTeamId, info.awayTeamId, info.seUpdatedAt, info.seCreatedAt]
+      [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.homeTeamId, info.awayTeamId, info.divisionId, info.divisionName, info.gender, info.seUpdatedAt, info.seCreatedAt, createdRecently]
     );
     if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
   }
