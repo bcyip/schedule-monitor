@@ -90,23 +90,21 @@
       <p class="muted" style="margin-top:-4px;">🟠 Orange rows = a genuinely new game added to the schedule (caught via <code>created</code>, not just <code>updated</code>)</p>
       <div style="overflow-x:auto;">
       <table class="changes-table">
-        <thead><tr><th>New?</th><th>Detected (UTC)</th><th>Updated SE (UTC)</th><th>Created (UTC)</th><th>UUID</th><th>Start (UTC)</th><th>Start (Eastern)</th><th>Gender</th><th>Division</th><th>Location</th><th>Home</th><th>Away</th></tr></thead>
+        <thead><tr><th>New?</th><th>Detected (UTC)</th><th>Updated SE (UTC)</th><th>UUID</th><th>Start (Eastern)</th><th>Gender</th><th>Division</th><th>Location</th><th>Home</th><th>Away</th></tr></thead>
         <tbody>
           ${data.changes.map(c => `
             <tr class="${c.is_new_game ? 'new-game' : ''}">
               <td>${c.is_new_game ? '<span class="new-game-badge">NEW</span>' : ''}</td>
               <td>${formatUTC(c.detected_at)}</td>
               <td>${formatUTC(c.se_updated_at)}</td>
-              <td>${formatUTC(c.se_created_at)}</td>
               <td style="font-size:10px;">${escapeHtml(c.event_id)}</td>
-              <td>${formatUTC(c.start_time)}</td>
               <td>${formatEastern(c.start_time)}</td>
               <td>${escapeHtml(c.gender || '')}</td>
               <td>${escapeHtml(c.division_name || '')}</td>
               <td>${escapeHtml(c.location_name || '')}</td>
               <td>${escapeHtml(c.home_team || '')}</td>
               <td>${escapeHtml(c.away_team || '')}</td>
-            </tr>
+              </tr>
           `).join('')}
         </tbody>
       </table>
