@@ -23,7 +23,6 @@
     .changes-table th { font-size: 10px; padding: 5px 6px; white-space: nowrap; }
     .changes-table td { font-size: 12px; padding: 5px 6px; white-space: nowrap; }
     .changes-table tr.new-game { background: #FDF0DD; }
-    .new-game-badge { display: inline-block; padding: 2px 7px; border-radius: 8px; font-size: 10px; font-weight: 700; background: #E7871A; color: #fff; }
     .err-box { background: #FBEAE8; color: #C0392B; padding: 10px 14px; border-radius: 6px; margin-top: 10px; font-size: 13px; white-space: pre-wrap; }
   </style>
 </head>
@@ -44,11 +43,38 @@
       <h3 style="margin:0;">Changes Detected — Last 24 Hours</h3>
       <a href="#" id="csvLink" class="muted">Download CSV</a>
     </div>
+    <div id="columnToggles" style="display:flex; flex-wrap:wrap; gap:10px; margin:10px 0; font-size:12px; color:#5A6472;">
+      <label><input type="checkbox" checked onchange="toggleColumn('detected', this.checked)"> Detected</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('updated', this.checked)"> Updated SE</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('uuid', this.checked)"> UUID</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('start', this.checked)"> Start</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('gender', this.checked)"> Gender</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('division', this.checked)"> Division</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('location', this.checked)"> Location</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('home', this.checked)"> Home</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('away', this.checked)"> Away</label>
+    </div>
     <div id="changesBox">Loading...</div>
   </div>
 </main>
 <script>
   let lastKnownRunAt = null; // used to detect when a NEW poll (scheduled or manual) has actually completed
+
+  // Column visibility state lives here (outside loadChanges), so it
+  // survives the table being fully regenerated on every refresh.
+  const hiddenColumns = new Set();
+
+  function toggleColumn(col, visible) {
+    if (visible) hiddenColumns.delete(col);
+    else hiddenColumns.add(col);
+    applyColumnVisibility();
+  }
+
+  function applyColumnVisibility() {
+    document.querySelectorAll('[data-col]').forEach((el) => {
+      el.style.display = hiddenColumns.has(el.getAttribute('data-col')) ? 'none' : '';
+    });
+  }
 
   async function loadStatus() {
     const res = await fetch('/api/status');
@@ -90,26 +116,30 @@
       <p class="muted" style="margin-top:-4px;">🟠 Orange rows = a genuinely new game added to the schedule (caught via <code>created</code>, not just <code>updated</code>)</p>
       <div style="overflow-x:auto;">
       <table class="changes-table">
-        <thead><tr><th>New?</th><th>Detected (UTC)</th><th>Updated SE (UTC)</th><th>UUID</th><th>Start (Eastern)</th><th>Gender</th><th>Division</th><th>Location</th><th>Home</th><th>Away</th></tr></thead>
+        <thead><tr>
+          <th data-col="detected">Detected (UTC)</th><th data-col="updated">Updated SE (UTC)</th><th data-col="uuid">UUID</th>
+          <th data-col="start">Start (Eastern)</th><th data-col="gender">Gender</th><th data-col="division">Division</th>
+          <th data-col="location">Location</th><th data-col="home">Home</th><th data-col="away">Away</th>
+        </tr></thead>
         <tbody>
           ${data.changes.map(c => `
             <tr class="${c.is_new_game ? 'new-game' : ''}">
-              <td>${c.is_new_game ? '<span class="new-game-badge">NEW</span>' : ''}</td>
-              <td>${formatUTC(c.detected_at)}</td>
-              <td>${formatUTC(c.se_updated_at)}</td>
-              <td style="font-size:10px;">${escapeHtml(c.event_id)}</td>
-              <td>${formatEastern(c.start_time)}</td>
-              <td>${escapeHtml(c.gender || '')}</td>
-              <td>${escapeHtml(c.division_name || '')}</td>
-              <td>${escapeHtml(c.location_name || '')}</td>
-              <td>${escapeHtml(c.home_team || '')}</td>
-              <td>${escapeHtml(c.away_team || '')}</td>
+              <td data-col="detected">${formatUTC(c.detected_at)}</td>
+              <td data-col="updated">${formatUTC(c.se_updated_at)}</td>
+              <td data-col="uuid" style="font-size:10px;">${escapeHtml(c.event_id)}</td>
+              <td data-col="start">${formatEastern(c.start_time)}</td>
+              <td data-col="gender">${escapeHtml(c.gender || '')}</td>
+              <td data-col="division">${escapeHtml(c.division_name || '')}</td>
+              <td data-col="location">${escapeHtml(c.location_name || '')}</td>
+              <td data-col="home">${escapeHtml(c.home_team || '')}</td>
+              <td data-col="away">${escapeHtml(c.away_team || '')}</td>
               </tr>
           `).join('')}
         </tbody>
       </table>
       </div>
     `;
+    applyColumnVisibility();
   }
 
   async function triggerPoll() {
