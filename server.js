@@ -40,6 +40,7 @@ const { Pool } = require('pg');
 
 const PORT = process.env.PORT || 8787;
 const HTML_FILE = path.join(__dirname, 'index.html');
+const SCHEDULE_HTML_FILE = path.join(__dirname, 'schedule.html');
 const SE_CLIENT_ID = process.env.SE_CLIENT_ID;
 const SE_CLIENT_SECRET = process.env.SE_CLIENT_SECRET;
 const SE_REFRESH_TOKEN = process.env.SE_REFRESH_TOKEN;
@@ -254,11 +255,11 @@ async function callGraphQLWithRetry(query, variables, maxAttempts = 3) {
   throw lastError;
 }
 
-async function fetchFullSchedule() {
-  const from = new Date().toISOString();
-  const to = SEASON_END_DATE
+async function fetchFullSchedule(fromOverride, toOverride) {
+  const from = fromOverride || new Date().toISOString();
+  const to = toOverride || (SEASON_END_DATE
     ? new Date(SEASON_END_DATE + 'T23:59:59.999Z').toISOString()
-    : new Date(Date.now() + POLL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    : new Date(Date.now() + POLL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString());
 
   let allEvents = [];
   let page = 1;
@@ -271,7 +272,7 @@ async function fetchFullSchedule() {
     const pageResults = (data.events && data.events.results) || [];
     allEvents = allEvents.concat(pageResults);
     totalPages = (data.events && data.events.pageInformation && data.events.pageInformation.pages) || 1;
-    console.log(`[poll] Fetched page ${page}/${totalPages} (${pageResults.length} events)`);
+    console.log(`[fetchFullSchedule] Fetched page ${page}/${totalPages} (${pageResults.length} events)`);
     page++;
     if (page <= totalPages) await sleep(PAGE_DELAY_MS);
   } while (page <= totalPages);
@@ -363,6 +364,37 @@ function generateCsv(changes) {
       csvEscape(c.home_team_id),
       csvEscape(c.away_team),
       csvEscape(c.away_team_id),
+    ].join(','));
+  }
+  return lines.join('\n');
+}
+
+// Separate from generateCsv above - that one works on DB rows (schedule_changes,
+// snake_case, includes detected_at/is_new_game/se_updated_at). This one works
+// directly on extractGameInfo's output (camelCase) for the raw schedule browser,
+// which has no "change" concept at all - just the current state of every game.
+function generateScheduleCsv(games) {
+  const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
+  const lines = [header.join(',')];
+  for (const g of games) {
+    const utc = formatUTCParts(g.startTime);
+    const eastern = formatEasternParts(g.startTime);
+    lines.push([
+      csvEscape(g.eventId),
+      csvEscape(utc.date),
+      csvEscape(utc.time),
+      csvEscape(eastern.date),
+      csvEscape(eastern.time),
+      csvEscape(g.gender),
+      csvEscape(g.divisionName),
+      csvEscape(g.divisionId),
+      csvEscape(g.locationName),
+      csvEscape(g.subvenueId),
+      csvEscape(g.venueId),
+      csvEscape(g.homeTeam),
+      csvEscape(g.homeTeamId),
+      csvEscape(g.awayTeam),
+      csvEscape(g.awayTeamId),
     ].join(','));
   }
   return lines.join('\n');
@@ -551,6 +583,57 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
+    });
+    return;
+  }
+
+  // GET /api/schedule?from=<ISO>&to=<ISO> — the raw schedule (every game,
+  // not just changes), for the schedule browser page. from/to default to
+  // the same full-season window the regular poll uses if omitted.
+  if (req.method === 'GET' && url.pathname === '/api/schedule') {
+    try {
+      const from = url.searchParams.get('from') || undefined;
+      const to = url.searchParams.get('to') || undefined;
+      const events = await fetchFullSchedule(from, to);
+      const games = events.map(extractGameInfo);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ games, count: games.length }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // GET /schedule.csv?from=<ISO>&to=<ISO> — same data, downloadable
+  if (req.method === 'GET' && url.pathname === '/schedule.csv') {
+    try {
+      const from = url.searchParams.get('from') || undefined;
+      const to = url.searchParams.get('to') || undefined;
+      const events = await fetchFullSchedule(from, to);
+      const games = events.map(extractGameInfo);
+      const csv = generateScheduleCsv(games);
+      res.writeHead(200, {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': 'attachment; filename="schedule.csv"',
+      });
+      res.end(csv);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Error: ' + err.message);
+    }
+    return;
+  }
+
+  // GET /schedule — the schedule browser page itself
+  if (req.method === 'GET' && url.pathname === '/schedule') {
+    fs.readFile(SCHEDULE_HTML_FILE, 'utf8', (err, data) => {
+      if (err) {
+        res.writeHead(404);
+        return res.end('schedule.html not found — make sure it is in the same folder as server.js');
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(data);
     });
     return;
   }

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Schedule Browser</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #F4F6FA; margin: 0; color: #1a1a1a; }
+    header { background: #11213F; color: #E7C247; padding: 12px 20px; font-weight: 700; font-size: 18px; display: flex; align-items: center; justify-content: space-between; }
+    header a { color: #6BC4E8; text-decoration: none; font-size: 13px; font-weight: 600; }
+    main { max-width: 1300px; margin: 0 auto; padding: 24px; }
+    .card { background: #fff; border: 1px solid #E1E5EC; border-radius: 10px; padding: 20px; margin-bottom: 18px; }
+    .muted { color: #5A6472; font-size: 13px; }
+    label { font-size: 13px; font-weight: 600; color: #5A6472; display: block; margin-bottom: 4px; }
+    input[type=date] { padding: 8px 10px; border: 1px solid #E1E5EC; border-radius: 6px; font-size: 14px; }
+    button { padding: 10px 18px; border-radius: 6px; border: none; background: #11213F; color: #fff; font-weight: 600; cursor: pointer; font-size: 14px; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .filter-row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; min-width: 1100px; }
+    th { text-align: left; font-size: 10px; text-transform: uppercase; color: #5A6472; padding: 5px 6px; border-bottom: 2px solid #E1E5EC; white-space: nowrap; }
+    td { padding: 5px 6px; border-bottom: 1px solid #E1E5EC; font-size: 12px; white-space: nowrap; }
+    .err-box { background: #FBEAE8; color: #C0392B; padding: 10px 14px; border-radius: 6px; margin-top: 10px; font-size: 13px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<header>
+  Schedule Browser
+  <a href="/">&larr; Back to Change Monitor</a>
+</header>
+<main>
+  <div class="card">
+    <h3 style="margin-top:0;">Filter</h3>
+    <div class="filter-row">
+      <div>
+        <label for="fromDate">From</label>
+        <input type="date" id="fromDate" />
+      </div>
+      <div>
+        <label for="toDate">To</label>
+        <input type="date" id="toDate" />
+      </div>
+      <button id="loadBtn" onclick="loadSchedule()">Load Schedule</button>
+      <button id="fullBtn" class="secondary" onclick="loadFullSeason()" style="background:#fff; color:#11213F; border:1px solid #11213F;">Load Full Season</button>
+    </div>
+    <p class="muted" style="margin-top:10px;">Leave both fields blank and click "Load Schedule", or use "Load Full Season", to fetch the entire remaining season (same window the change monitor polls).</p>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <h3 style="margin:0;">Results</h3>
+      <a href="#" id="csvLink" class="muted">Download CSV</a>
+    </div>
+    <div id="resultsBox">
+      <p class="muted">Choose a date range (or leave blank for the full season) and click "Load Schedule".</p>
+    </div>
+  </div>
+</main>
+<script>
+  let lastQuery = { from: '', to: '' };
+
+  function loadFullSeason() {
+    document.getElementById('fromDate').value = '';
+    document.getElementById('toDate').value = '';
+    loadSchedule();
+  }
+
+  async function loadSchedule() {
+    const fromInput = document.getElementById('fromDate').value;
+    const toInput = document.getElementById('toDate').value;
+    const loadBtn = document.getElementById('loadBtn');
+    const fullBtn = document.getElementById('fullBtn');
+    const box = document.getElementById('resultsBox');
+
+    // Dates from <input type=date> are just YYYY-MM-DD (local, no time) -
+    // convert to full-day UTC bounds so the range behaves as expected.
+    const from = fromInput ? new Date(fromInput + 'T00:00:00.000Z').toISOString() : '';
+    const to = toInput ? new Date(toInput + 'T23:59:59.999Z').toISOString() : '';
+    lastQuery = { from, to };
+
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    document.getElementById('csvLink').href = '/schedule.csv' + (params.toString() ? '?' + params.toString() : '');
+
+    loadBtn.disabled = true;
+    fullBtn.disabled = true;
+    loadBtn.textContent = 'Loading...';
+    box.innerHTML = '<p class="muted">Fetching schedule - this can take a minute or two for the full season...</p>';
+
+    try {
+      const res = await fetch('/api/schedule' + (params.toString() ? '?' + params.toString() : ''));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unknown error');
+      renderResults(data.games);
+    } catch (e) {
+      box.innerHTML = '<div class="err-box">Failed to load schedule: ' + escapeHtml(e.message) + '</div>';
+    } finally {
+      loadBtn.disabled = false;
+      fullBtn.disabled = false;
+      loadBtn.textContent = 'Load Schedule';
+    }
+  }
+
+  function renderResults(games) {
+    const box = document.getElementById('resultsBox');
+    if (!games || games.length === 0) {
+      box.innerHTML = '<p class="muted">No games found in this range.</p>';
+      return;
+    }
+    // Sort by start time for a sensible default view
+    const sorted = [...games].sort((a, b) => new Date(a.startTime || 0) - new Date(b.startTime || 0));
+
+    box.innerHTML = `
+      <p class="muted" style="margin-top:0;">${games.length} game(s) found.</p>
+      <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th>Date (Eastern)</th><th>Time (Eastern)</th><th>UUID</th><th>Gender</th><th>Division</th>
+          <th>Location</th><th>Home</th><th>Away</th>
+        </tr></thead>
+        <tbody>
+          ${sorted.map(g => `
+            <tr>
+              <td>${formatEasternDate(g.startTime)}</td>
+              <td>${formatEasternTime(g.startTime)}</td>
+              <td style="font-size:10px;">${escapeHtml(g.eventId)}</td>
+              <td>${escapeHtml(g.gender || '')}</td>
+              <td>${escapeHtml(g.divisionName || '')}</td>
+              <td>${escapeHtml(g.locationName || '')}</td>
+              <td>${escapeHtml(g.homeTeam || '')}</td>
+              <td>${escapeHtml(g.awayTeam || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      </div>
+    `;
+  }
+
+  function formatEasternDate(isoString) {
+    if (!isoString) return '';
+    return new Date(isoString).toLocaleDateString('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+  }
+
+  function formatEasternTime(isoString) {
+    if (!isoString) return '';
+    return new Date(isoString).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+</script>
+</body>
+</html>
