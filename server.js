@@ -483,6 +483,14 @@ async function runPoll() {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
 
+  // GET /api/config — exposes the actual configured poll window, so the
+  // UI can display real dates instead of a vague description.
+  if (req.method === 'GET' && url.pathname === '/api/config') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ seasonEndDate: SEASON_END_DATE, pollWindowDays: POLL_WINDOW_DAYS }));
+    return;
+  }
+
   // GET /api/status — last poll run's outcome, for the debug UI
   if (req.method === 'GET' && url.pathname === '/api/status') {
     try {
