@@ -264,6 +264,7 @@ async function fetchFullSchedule(fromOverride, toOverride) {
   let allEvents = [];
   let page = 1;
   let totalPages = 1;
+  let expectedCount = null;
   const PER_PAGE = parseInt(process.env.EVENTS_PER_PAGE || '40', 10); // 100/page hit "complexity 201, max 101" - roughly 2 complexity/game, so 40 leaves real margin under the ~50 edge
   const PAGE_DELAY_MS = parseInt(process.env.PAGE_DELAY_MS || '1000', 10); // bumped from 400ms after hitting confirmed TOO_MANY_REQUESTS from SportsEngine
 
@@ -272,12 +273,24 @@ async function fetchFullSchedule(fromOverride, toOverride) {
     const pageResults = (data.events && data.events.results) || [];
     allEvents = allEvents.concat(pageResults);
     totalPages = (data.events && data.events.pageInformation && data.events.pageInformation.pages) || 1;
+    expectedCount = (data.events && data.events.pageInformation && data.events.pageInformation.count) ?? expectedCount;
     console.log(`[fetchFullSchedule] Fetched page ${page}/${totalPages} (${pageResults.length} events)`);
     page++;
     if (page <= totalPages) await sleep(PAGE_DELAY_MS);
   } while (page <= totalPages);
 
-  return allEvents;
+  // Detect pagination drift: SportsEngine's own reported total (count) vs
+  // what we actually collected across all pages. Offset/page-number-based
+  // pagination (which this is) can drift under concurrent writes - see
+  // conversation for the full reasoning. A mismatch here means some games
+  // were likely missed (or, less likely, double-counted) during this fetch.
+  const actualCount = allEvents.length;
+  const countMismatch = expectedCount != null && actualCount !== expectedCount;
+  if (countMismatch) {
+    console.warn(`[fetchFullSchedule] COUNT MISMATCH: expected ${expectedCount} games, actually collected ${actualCount}. Pagination drift likely occurred - a re-query is recommended.`);
+  }
+
+  return { events: allEvents, expectedCount, actualCount, countMismatch };
 }
 
 function extractGameInfo(event) {
@@ -402,12 +415,14 @@ function generateScheduleCsv(games) {
 
 // ---------- Poll run status tracking (for the status UI) ----------
 
-async function recordPollSuccess(changeCount) {
+async function recordPollSuccess(changeCount, countMismatch, expectedCount, actualCount) {
   await pool.query(
-    `INSERT INTO poll_state (id, last_run_at, last_run_status, last_run_error, last_run_change_count)
-     VALUES (1, now(), 'success', NULL, $1)
-     ON CONFLICT (id) DO UPDATE SET last_run_at = now(), last_run_status = 'success', last_run_error = NULL, last_run_change_count = EXCLUDED.last_run_change_count`,
-    [changeCount]
+    `INSERT INTO poll_state (id, last_run_at, last_run_status, last_run_error, last_run_change_count, count_mismatch, expected_count, actual_count)
+     VALUES (1, now(), 'success', NULL, $1, $2, $3, $4)
+     ON CONFLICT (id) DO UPDATE SET last_run_at = now(), last_run_status = 'success', last_run_error = NULL,
+       last_run_change_count = EXCLUDED.last_run_change_count, count_mismatch = EXCLUDED.count_mismatch,
+       expected_count = EXCLUDED.expected_count, actual_count = EXCLUDED.actual_count`,
+    [changeCount, !!countMismatch, expectedCount, actualCount]
   );
 }
 
@@ -436,9 +451,9 @@ async function runPoll() {
   console.log('[poll] Starting schedule poll...');
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  let events;
+  let events, countMismatch, expectedCount, actualCount;
   try {
-    events = await fetchFullSchedule();
+    ({ events, countMismatch, expectedCount, actualCount } = await fetchFullSchedule());
   } catch (err) {
     console.error('[poll] Failed to fetch schedule:', err.message);
     await recordPollFailure(err.message);
@@ -473,7 +488,7 @@ async function runPoll() {
     if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
   }
 
-  await recordPollSuccess(changeCount);
+  await recordPollSuccess(changeCount, countMismatch, expectedCount, actualCount);
   console.log(`[poll] Done. ${changeCount} new change(s) recorded (duplicates, if any, were skipped).`);
 }
 
@@ -602,10 +617,10 @@ const server = http.createServer(async (req, res) => {
     try {
       const from = url.searchParams.get('from') || undefined;
       const to = url.searchParams.get('to') || undefined;
-      const events = await fetchFullSchedule(from, to);
+      const { events, countMismatch, expectedCount, actualCount } = await fetchFullSchedule(from, to);
       const games = events.map(extractGameInfo);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ games, count: games.length }));
+      res.end(JSON.stringify({ games, count: games.length, countMismatch, expectedCount, actualCount }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
@@ -618,7 +633,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const from = url.searchParams.get('from') || undefined;
       const to = url.searchParams.get('to') || undefined;
-      const events = await fetchFullSchedule(from, to);
+      const { events } = await fetchFullSchedule(from, to);
       const games = events.map(extractGameInfo);
       const csv = generateScheduleCsv(games);
       res.writeHead(200, {

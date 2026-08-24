@@ -111,7 +111,7 @@
       const res = await fetch('/api/schedule' + (params.toString() ? '?' + params.toString() : ''));
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unknown error');
-      renderResults(data.games);
+      renderResults(data.games, data.countMismatch, data.expectedCount, data.actualCount);
     } catch (e) {
       box.innerHTML = '<div class="err-box">Failed to load schedule: ' + escapeHtml(e.message) + '</div>';
     } finally {
@@ -121,16 +121,20 @@
     }
   }
 
-  function renderResults(games) {
+  function renderResults(games, countMismatch, expectedCount, actualCount) {
     const box = document.getElementById('resultsBox');
+    const mismatchWarning = countMismatch
+      ? '<div class="err-box">WARNING - PAGINATION COUNT MISMATCH: expected ' + expectedCount + ' games, only collected ' + actualCount + '. Some games were likely missed during this fetch (SportsEngine pagination can drift under concurrent schedule edits). Click "Load Schedule" again to re-query.</div>'
+      : '';
+
     if (!games || games.length === 0) {
-      box.innerHTML = '<p class="muted">No games found in this range.</p>';
+      box.innerHTML = mismatchWarning + '<p class="muted">No games found in this range.</p>';
       return;
     }
     // Sort by start time for a sensible default view
     const sorted = [...games].sort((a, b) => new Date(a.startTime || 0) - new Date(b.startTime || 0));
 
-    box.innerHTML = `
+    box.innerHTML = mismatchWarning + `
       <p class="muted" style="margin-top:0;">${games.length} game(s) found.</p>
       <div style="overflow-x:auto;">
       <table>

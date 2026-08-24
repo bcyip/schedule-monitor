@@ -96,6 +96,7 @@
       <p>${badge} — last run at ${formatUTC(s.last_run_at)}</p>
       <p class="muted" style="margin-top:-8px;">(${new Date(s.last_run_at).toLocaleString()} local)</p>
       ${s.last_run_status === 'success' ? '<p class="muted">' + (s.last_run_change_count ?? 0) + ' <em>new</em> change(s) added by this run (duplicates already on file from earlier runs are not re-counted — see the table below for everything currently within the last 24h).</p>' : ''}
+      ${s.count_mismatch ? '<div class="err-box">WARNING - PAGINATION COUNT MISMATCH: expected ' + s.expected_count + ' games, only collected ' + s.actual_count + '. Some games were likely missed during this fetch (SportsEngine pagination can drift under concurrent schedule edits). Click "Trigger Poll Now" to re-query.</div>' : ''}
       ${s.last_run_error ? '<div class="err-box">' + escapeHtml(s.last_run_error) + '</div>' : ''}
     `;
 
