@@ -96,7 +96,7 @@
         <thead><tr><th>Name</th><th>Venue UUID</th><th>Address</th><th># Subvenues</th></tr></thead>
         <tbody>
           ${venues.map(v => `
-            <tr class="venue-row" data-venue-id="${escapeHtml(v.venueId)}" onclick="loadSubvenues(${JSON.stringify(String(v.venueId))}, ${JSON.stringify(v.name || '')})">
+            <tr class="venue-row" data-venue-id="${escapeHtml(v.venueId)}" data-venue-name="${escapeHtml(v.name || '')}">
               <td>${escapeHtml(v.name || '')}</td>
               <td style="font-size:11px;">${escapeHtml(v.venueId)}</td>
               <td>${escapeHtml(v.address || '')}</td>
@@ -168,6 +168,18 @@
   }
 
   loadVenues();
+
+  // Event delegation: one listener on the container, reads properly
+  // HTML-escaped data-* attributes via the DOM rather than interpolating
+  // values into inline onclick handlers (which broke on the double-quote
+  // conflict between JSON.stringify's output and the attribute's own
+  // quoting - see conversation). This is also immune to venue names
+  // containing quotes or apostrophes, which the old approach was not.
+  document.getElementById('venuesBox').addEventListener('click', (e) => {
+    const row = e.target.closest('tr.venue-row');
+    if (!row) return;
+    loadSubvenues(row.dataset.venueId, row.dataset.venueName);
+  });
 </script>
 </body>
 </html>
