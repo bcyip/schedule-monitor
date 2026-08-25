@@ -232,6 +232,16 @@ const EVENTS_QUERY = `
     }
   }`;
 
+// NOTE: `created`/`updated` are NOT confirmed to exist on these types (the
+// original confirmed query shapes for venues()/subvenues() didn't include
+// them, unlike events()). Added speculatively, matching the naming used
+// elsewhere in this API - if either field doesn't actually exist, this
+// whole query fails with a clear "field not found" GraphQL error, easy to
+// spot and fix by removing the offending line.
+// `created` is confirmed NOT present on subvenues (per the user's actual
+// working query) - removed from both here, keeping only the confirmed
+// `updated` field. Venues wasn't independently reconfirmed, but is kept
+// consistent with its sibling type rather than continuing to guess.
 const VENUES_QUERY = `
   query Venue($orgId: Int!, $page: Int!, $perPage: Int!) {
     venues(organizationId: $orgId, perPage: $perPage, page: $page) {
@@ -242,6 +252,7 @@ const VENUES_QUERY = `
         name
         subvenueCount
         url
+        updated
       }
     }
   }`;
@@ -249,7 +260,7 @@ const VENUES_QUERY = `
 const SUBVENUES_QUERY = `
   query Subvenues($orgId: Int!, $venueId: Int!, $page: Int!, $perPage: Int!) {
     subvenues(organizationId: $orgId, venueId: $venueId, page: $page, perPage: $perPage) {
-      results { name venueId id }
+      results { name venueId id updated }
       pageInformation { count page pages }
     }
   }`;
@@ -374,13 +385,21 @@ function extractVenueInfo(venue) {
   const addressLine = [addr.address1, addr.address2].filter(Boolean).join(' ');
   const cityStateZip = [addr.city, [addr.state, addr.postalCode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const fullAddress = [addressLine, cityStateZip].filter(Boolean).join(', ') || null;
+  const updatedAt = venue.updated || null;
   return {
     venueId: venue.id,
     name: venue.name || null,
     address: fullAddress,
     subvenueCount: venue.subvenueCount ?? null,
     url: venue.url || null,
+    updatedAt,
+    isNew: isWithinLast24h(updatedAt),
   };
+}
+
+function isWithinLast24h(isoString) {
+  if (!isoString) return false;
+  return new Date(isoString) > new Date(Date.now() - 24 * 60 * 60 * 1000);
 }
 
 function extractGameInfo(event) {
@@ -804,8 +823,15 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const { subvenues, countMismatch, expectedCount, actualCount } = await fetchSubvenuesForVenue(venueId);
+      const results = subvenues.map((s) => ({
+        id: s.id,
+        name: s.name,
+        venueId: s.venueId,
+        updatedAt: s.updated || null,
+        isNew: isWithinLast24h(s.updated),
+      }));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ subvenues, count: subvenues.length, countMismatch, expectedCount, actualCount }));
+      res.end(JSON.stringify({ subvenues: results, count: results.length, countMismatch, expectedCount, actualCount }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
