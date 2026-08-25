@@ -41,6 +41,7 @@ const { Pool } = require('pg');
 const PORT = process.env.PORT || 8787;
 const HTML_FILE = path.join(__dirname, 'index.html');
 const SCHEDULE_HTML_FILE = path.join(__dirname, 'schedule.html');
+const VENUES_HTML_FILE = path.join(__dirname, 'venues.html');
 const SE_CLIENT_ID = process.env.SE_CLIENT_ID;
 const SE_CLIENT_SECRET = process.env.SE_CLIENT_SECRET;
 const SE_REFRESH_TOKEN = process.env.SE_REFRESH_TOKEN;
@@ -231,6 +232,28 @@ const EVENTS_QUERY = `
     }
   }`;
 
+const VENUES_QUERY = `
+  query Venue($orgId: Int!, $page: Int!, $perPage: Int!) {
+    venues(organizationId: $orgId, perPage: $perPage, page: $page) {
+      pageInformation { count page pages perPage }
+      results {
+        address { address1 address2 city googlePlaceId latitude longitude postalCode state }
+        id
+        name
+        subvenueCount
+        url
+      }
+    }
+  }`;
+
+const SUBVENUES_QUERY = `
+  query Subvenues($orgId: Int!, $venueId: Int!, $page: Int!, $perPage: Int!) {
+    subvenues(organizationId: $orgId, venueId: $venueId, page: $page, perPage: $perPage) {
+      results { name venueId id }
+      pageInformation { count page pages }
+    }
+  }`;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -291,6 +314,73 @@ async function fetchFullSchedule(fromOverride, toOverride) {
   }
 
   return { events: allEvents, expectedCount, actualCount, countMismatch };
+}
+
+async function fetchAllVenues() {
+  let allVenues = [];
+  let page = 1;
+  let totalPages = 1;
+  let expectedCount = null;
+  const PER_PAGE = 75; // matches the confirmed working example
+
+  do {
+    const data = await callGraphQLWithRetry(VENUES_QUERY, { orgId: SE_ORG_ID, page, perPage: PER_PAGE });
+    const pageResults = (data.venues && data.venues.results) || [];
+    allVenues = allVenues.concat(pageResults);
+    totalPages = (data.venues && data.venues.pageInformation && data.venues.pageInformation.pages) || 1;
+    expectedCount = (data.venues && data.venues.pageInformation && data.venues.pageInformation.count) ?? expectedCount;
+    console.log(`[fetchAllVenues] Fetched page ${page}/${totalPages} (${pageResults.length} venues)`);
+    page++;
+    if (page <= totalPages) await sleep(parseInt(process.env.PAGE_DELAY_MS || '1000', 10));
+  } while (page <= totalPages);
+
+  const actualCount = allVenues.length;
+  const countMismatch = expectedCount != null && actualCount !== expectedCount;
+  if (countMismatch) {
+    console.warn(`[fetchAllVenues] COUNT MISMATCH: expected ${expectedCount} venues, actually collected ${actualCount}.`);
+  }
+
+  return { venues: allVenues, expectedCount, actualCount, countMismatch };
+}
+
+async function fetchSubvenuesForVenue(venueId) {
+  let allSubvenues = [];
+  let page = 1;
+  let totalPages = 1;
+  let expectedCount = null;
+  const PER_PAGE = 75;
+
+  do {
+    const data = await callGraphQLWithRetry(SUBVENUES_QUERY, { orgId: SE_ORG_ID, venueId, page, perPage: PER_PAGE });
+    const pageResults = (data.subvenues && data.subvenues.results) || [];
+    allSubvenues = allSubvenues.concat(pageResults);
+    totalPages = (data.subvenues && data.subvenues.pageInformation && data.subvenues.pageInformation.pages) || 1;
+    expectedCount = (data.subvenues && data.subvenues.pageInformation && data.subvenues.pageInformation.count) ?? expectedCount;
+    page++;
+    if (page <= totalPages) await sleep(parseInt(process.env.PAGE_DELAY_MS || '1000', 10));
+  } while (page <= totalPages);
+
+  const actualCount = allSubvenues.length;
+  const countMismatch = expectedCount != null && actualCount !== expectedCount;
+  if (countMismatch) {
+    console.warn(`[fetchSubvenuesForVenue] COUNT MISMATCH for venue ${venueId}: expected ${expectedCount}, actually collected ${actualCount}.`);
+  }
+
+  return { subvenues: allSubvenues, expectedCount, actualCount, countMismatch };
+}
+
+function extractVenueInfo(venue) {
+  const addr = venue.address || {};
+  const addressLine = [addr.address1, addr.address2].filter(Boolean).join(' ');
+  const cityStateZip = [addr.city, [addr.state, addr.postalCode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const fullAddress = [addressLine, cityStateZip].filter(Boolean).join(', ') || null;
+  return {
+    venueId: venue.id,
+    name: venue.name || null,
+    address: fullAddress,
+    subvenueCount: venue.subvenueCount ?? null,
+    url: venue.url || null,
+  };
 }
 
 function extractGameInfo(event) {
@@ -413,7 +503,35 @@ function generateScheduleCsv(games) {
   return lines.join('\n');
 }
 
-// ---------- Poll run status tracking (for the status UI) ----------
+function generateVenuesCsv(venues) {
+  const header = ['Venue UUID', 'Name', 'Address', 'Subvenue Count', 'URL'];
+  const lines = [header.join(',')];
+  for (const v of venues) {
+    lines.push([
+      csvEscape(v.venueId),
+      csvEscape(v.name),
+      csvEscape(v.address),
+      csvEscape(v.subvenueCount),
+      csvEscape(v.url),
+    ].join(','));
+  }
+  return lines.join('\n');
+}
+
+function generateSubvenuesCsv(subvenues) {
+  const header = ['Subvenue UUID', 'Field Name', 'Venue UUID'];
+  const lines = [header.join(',')];
+  for (const s of subvenues) {
+    lines.push([
+      csvEscape(s.id),
+      csvEscape(s.name),
+      csvEscape(s.venueId),
+    ].join(','));
+  }
+  return lines.join('\n');
+}
+
+// ---------- Poll run status tracking (for the debug UI) ----------
 
 async function recordPollSuccess(changeCount, countMismatch, expectedCount, actualCount) {
   await pool.query(
@@ -645,6 +763,85 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
       res.end('Error: ' + err.message);
     }
+    return;
+  }
+
+  // GET /api/venues — the full venue list
+  if (req.method === 'GET' && url.pathname === '/api/venues') {
+    try {
+      const { venues, countMismatch, expectedCount, actualCount } = await fetchAllVenues();
+      const results = venues.map(extractVenueInfo);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ venues: results, count: results.length, countMismatch, expectedCount, actualCount }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // GET /venues.csv — venue list, downloadable
+  if (req.method === 'GET' && url.pathname === '/venues.csv') {
+    try {
+      const { venues } = await fetchAllVenues();
+      const results = venues.map(extractVenueInfo);
+      const csv = generateVenuesCsv(results);
+      res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="venues.csv"' });
+      res.end(csv);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Error: ' + err.message);
+    }
+    return;
+  }
+
+  // GET /api/subvenues?venueId=<id> — subvenues (fields) for one specific venue
+  if (req.method === 'GET' && url.pathname === '/api/subvenues') {
+    const venueId = parseInt(url.searchParams.get('venueId'), 10);
+    if (!venueId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'venueId query parameter is required.' }));
+    }
+    try {
+      const { subvenues, countMismatch, expectedCount, actualCount } = await fetchSubvenuesForVenue(venueId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ subvenues, count: subvenues.length, countMismatch, expectedCount, actualCount }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // GET /subvenues.csv?venueId=<id> — same, downloadable
+  if (req.method === 'GET' && url.pathname === '/subvenues.csv') {
+    const venueId = parseInt(url.searchParams.get('venueId'), 10);
+    if (!venueId) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      return res.end('venueId query parameter is required.');
+    }
+    try {
+      const { subvenues } = await fetchSubvenuesForVenue(venueId);
+      const csv = generateSubvenuesCsv(subvenues);
+      res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="subvenues-${venueId}.csv"` });
+      res.end(csv);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Error: ' + err.message);
+    }
+    return;
+  }
+
+  // GET /venues — the venues/subvenues browser page itself
+  if (req.method === 'GET' && url.pathname === '/venues') {
+    fs.readFile(VENUES_HTML_FILE, 'utf8', (err, data) => {
+      if (err) {
+        res.writeHead(404);
+        return res.end('venues.html not found — make sure it is in the same folder as server.js');
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(data);
+    });
     return;
   }
 
