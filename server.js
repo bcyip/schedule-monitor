@@ -386,12 +386,24 @@ function extractVenueInfo(venue) {
   const cityStateZip = [addr.city, [addr.state, addr.postalCode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const fullAddress = [addressLine, cityStateZip].filter(Boolean).join(', ') || null;
   const updatedAt = venue.updated || null;
+
+  // Google's documented Place-ID deep-link format - most precise option,
+  // pinpoints the exact place rather than just an address string.
+  let mapUrl = null;
+  if (addr.googlePlaceId) {
+    mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venue.name || 'venue')}&query_place_id=${encodeURIComponent(addr.googlePlaceId)}`;
+  } else if (addr.latitude != null && addr.longitude != null) {
+    // Fallback for any venue missing a place ID but with coordinates.
+    mapUrl = `https://www.google.com/maps/search/?api=1&query=${addr.latitude},${addr.longitude}`;
+  }
+
   return {
     venueId: venue.id,
     name: venue.name || null,
     address: fullAddress,
     subvenueCount: venue.subvenueCount ?? null,
     url: venue.url || null,
+    mapUrl,
     updatedAt,
     isNew: isWithinLast24h(updatedAt),
   };

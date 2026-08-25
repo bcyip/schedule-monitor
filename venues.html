@@ -45,13 +45,6 @@
     <p class="muted" style="margin-top:8px;">Click a venue below to load its subvenues (fields).</p>
     <div id="venuesBox"><p class="muted">Loading venues...</p></div>
   </div>
-
-  <div class="card" id="subvenuesCard" style="display:none;">
-    <div style="display:flex; align-items:center; justify-content:space-between;">
-      <h3 style="margin:0;" id="subvenuesTitle">Subvenues</h3>
-    </div>
-    <div id="subvenuesBox"></div>
-  </div>
 </main>
 <script>
   let allVenues = [];
@@ -96,16 +89,16 @@
       <p class="muted" style="margin-top:8px;">${venues.length} venue(s). <span style="color:#E7871A;">Orange rows</span> = created in the last 24h.</p>
       <div style="overflow-x:auto;">
       <table>
-        <thead><tr><th>Name</th><th>Venue UUID</th><th>Address</th><th># Subvenues</th><th>Updated (UTC)</th><th>Link</th></tr></thead>
+        <thead><tr><th>Name</th><th>Venue UUID</th><th>Address</th><th>Map</th><th># Subvenues</th><th>Updated (UTC)</th></tr></thead>
         <tbody>
           ${venues.map(v => `
             <tr class="venue-row ${v.isNew ? 'is-new' : ''}" data-venue-id="${escapeHtml(v.venueId)}" data-venue-name="${escapeHtml(v.name || '')}">
               <td>${escapeHtml(v.name || '')}</td>
               <td style="font-size:11px;">${escapeHtml(v.venueId)}</td>
               <td>${escapeHtml(v.address || '')}</td>
+              <td>${v.mapUrl ? '<a href="' + escapeHtml(v.mapUrl) + '" target="_blank" rel="noopener">Map</a>' : ''}</td>
               <td>${escapeHtml(v.subvenueCount ?? '')}</td>
               <td>${formatUTC(v.updatedAt)}</td>
-              <td>${v.url ? '<a href="' + escapeHtml(v.url) + '" target="_blank" rel="noopener">View</a>' : ''}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -125,21 +118,34 @@
   let currentVenueId = null;
   let currentVenueName = null;
 
-  async function loadSubvenues(venueId, venueName) {
-    document.querySelectorAll('.venue-row').forEach(row => row.classList.remove('selected'));
-    const clickedRow = document.querySelector(`.venue-row[data-venue-id="${CSS.escape(venueId)}"]`);
-    if (clickedRow) clickedRow.classList.add('selected');
+  const VENUE_TABLE_COLSPAN = 6; // Name, Venue UUID, Address, Map, # Subvenues, Updated (UTC)
 
+  async function loadSubvenues(venueId, venueName) {
+    const clickedRow = document.querySelector(`.venue-row[data-venue-id="${CSS.escape(venueId)}"]`);
+    if (!clickedRow) return;
+
+    const existingExpansion = clickedRow.nextElementSibling;
+    const isAlreadyExpanded = existingExpansion && existingExpansion.classList.contains('subvenue-expansion') && clickedRow.classList.contains('selected');
+
+    // Collapse whatever's currently expanded (if any), and deselect its row.
+    document.querySelectorAll('.subvenue-expansion').forEach(row => row.remove());
+    document.querySelectorAll('.venue-row').forEach(row => row.classList.remove('selected'));
+
+    if (isAlreadyExpanded) {
+      // Clicking an already-expanded venue again just collapses it - done.
+      return;
+    }
+
+    clickedRow.classList.add('selected');
     currentVenueId = venueId;
     currentVenueName = venueName;
 
-    const card = document.getElementById('subvenuesCard');
-    const box = document.getElementById('subvenuesBox');
-    const title = document.getElementById('subvenuesTitle');
-    card.style.display = 'block';
-    title.textContent = 'Subvenues — ' + venueName;
-    box.innerHTML = '<p class="muted">Loading subvenues...</p>';
-    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Insert a loading row directly under the clicked venue immediately,
+    // then fetch (only now - never eagerly) and replace its contents.
+    const loadingRow = document.createElement('tr');
+    loadingRow.className = 'subvenue-expansion';
+    loadingRow.innerHTML = `<td colspan="${VENUE_TABLE_COLSPAN}"><p class="muted" style="margin:6px 0;">Loading subvenues...</p></td>`;
+    clickedRow.after(loadingRow);
 
     try {
       const res = await fetch('/api/subvenues?venueId=' + encodeURIComponent(venueId));
@@ -153,27 +159,30 @@
         : '';
 
       if (!data.subvenues || data.subvenues.length === 0) {
-        box.innerHTML = mismatchWarning + '<p class="muted">No subvenues found for this venue.</p>';
+        loadingRow.innerHTML = `<td colspan="${VENUE_TABLE_COLSPAN}">${mismatchWarning}<p class="muted" style="margin:6px 0;">No subvenues found for this venue.</p></td>`;
         return;
       }
 
-      box.innerHTML = mismatchWarning + `
-        <p class="muted" style="margin-top:8px;">${data.subvenues.length} subvenue(s). <span style="color:#E7871A;">Orange rows</span> = created in the last 24h.</p>
-        <table>
-          <thead><tr><th>Field Name</th><th>Subvenue UUID</th><th>Updated (UTC)</th></tr></thead>
-          <tbody>
-            ${data.subvenues.map(s => `
-              <tr class="${s.isNew ? 'is-new' : ''}">
-                <td>${escapeHtml(s.name || '')}</td>
-                <td style="font-size:11px;">${escapeHtml(s.id)}</td>
-                <td>${formatUTC(s.updatedAt)}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
+      loadingRow.innerHTML = `
+        <td colspan="${VENUE_TABLE_COLSPAN}" style="background:#F9FAFC; padding:10px 16px;">
+          ${mismatchWarning}
+          <p class="muted" style="margin:4px 0 6px;">${data.subvenues.length} subvenue(s) for ${escapeHtml(venueName)}. <span style="color:#E7871A;">Orange rows</span> = updated in the last 24h.</p>
+          <table>
+            <thead><tr><th>Field Name</th><th>Subvenue UUID</th><th>Updated (UTC)</th></tr></thead>
+            <tbody>
+              ${data.subvenues.map(s => `
+                <tr class="${s.isNew ? 'is-new' : ''}">
+                  <td>${escapeHtml(s.name || '')}</td>
+                  <td style="font-size:11px;">${escapeHtml(s.id)}</td>
+                  <td>${formatUTC(s.updatedAt)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </td>
       `;
     } catch (e) {
-      box.innerHTML = '<div class="err-box">Failed to load subvenues: ' + escapeHtml(e.message) + '</div>';
+      loadingRow.innerHTML = `<td colspan="${VENUE_TABLE_COLSPAN}"><div class="err-box">Failed to load subvenues: ${escapeHtml(e.message)}</div></td>`;
     }
   }
 
@@ -196,9 +205,9 @@
     const lines = [];
 
     lines.push('=== VENUES (' + currentFilteredVenues.length + (document.getElementById('searchBox').value.trim() ? ', filtered by "' + document.getElementById('searchBox').value.trim() + '"' : '') + ') ===');
-    lines.push(['Venue UUID', 'Name', 'Address', '# Subvenues', 'Updated (UTC)', 'URL'].join(','));
+    lines.push(['Venue UUID', 'Name', 'Address', 'Map Link', '# Subvenues', 'Updated (UTC)', 'URL'].join(','));
     for (const v of currentFilteredVenues) {
-      lines.push([csvEscape(v.venueId), csvEscape(v.name), csvEscape(v.address), csvEscape(v.subvenueCount), csvEscape(formatUTC(v.updatedAt)), csvEscape(v.url)].join(','));
+      lines.push([csvEscape(v.venueId), csvEscape(v.name), csvEscape(v.address), csvEscape(v.mapUrl), csvEscape(v.subvenueCount), csvEscape(formatUTC(v.updatedAt)), csvEscape(v.url)].join(','));
     }
 
     if (currentVenueId && currentSubvenues.length > 0) {
