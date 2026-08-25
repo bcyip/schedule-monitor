@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Venues Browser</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #F4F6FA; margin: 0; color: #1a1a1a; }
+    header { background: #11213F; color: #E7C247; padding: 12px 20px; font-weight: 700; font-size: 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    header .nav-links { display: flex; gap: 16px; }
+    header a { color: #6BC4E8; text-decoration: none; font-size: 13px; font-weight: 600; }
+    main { max-width: 1300px; margin: 0 auto; padding: 24px; }
+    .card { background: #fff; border: 1px solid #E1E5EC; border-radius: 10px; padding: 20px; margin-bottom: 18px; }
+    .muted { color: #5A6472; font-size: 13px; }
+    input[type=text] { padding: 9px 12px; border: 1px solid #E1E5EC; border-radius: 6px; font-size: 14px; width: 320px; max-width: 100%; }
+    button { padding: 10px 18px; border-radius: 6px; border: none; background: #11213F; color: #fff; font-weight: 600; cursor: pointer; font-size: 14px; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th { text-align: left; font-size: 10px; text-transform: uppercase; color: #5A6472; padding: 6px 8px; border-bottom: 2px solid #E1E5EC; white-space: nowrap; }
+    td { padding: 7px 8px; border-bottom: 1px solid #E1E5EC; font-size: 13px; }
+    tr.venue-row { cursor: pointer; }
+    tr.venue-row:hover { background: #F4F9FD; }
+    tr.venue-row.selected { background: #E7F3FB; }
+    .err-box { background: #FBEAE8; color: #C0392B; padding: 10px 14px; border-radius: 6px; margin-top: 10px; font-size: 13px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<header>
+  Venues Browser
+  <div class="nav-links">
+    <a href="/">Change Monitor</a>
+    <a href="/schedule">Schedule Browser</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+      <h3 style="margin:0;">All Venues</h3>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <input type="text" id="searchBox" placeholder="Search by venue name..." oninput="filterVenues()" />
+        <a href="/venues.csv" class="muted">Download CSV</a>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:8px;">Click a venue below to load its subvenues (fields).</p>
+    <div id="venuesBox"><p class="muted">Loading venues...</p></div>
+  </div>
+
+  <div class="card" id="subvenuesCard" style="display:none;">
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <h3 style="margin:0;" id="subvenuesTitle">Subvenues</h3>
+      <a href="#" id="subvenuesCsvLink" class="muted">Download CSV</a>
+    </div>
+    <div id="subvenuesBox"></div>
+  </div>
+</main>
+<script>
+  let allVenues = [];
+
+  async function loadVenues() {
+    const box = document.getElementById('venuesBox');
+    try {
+      const res = await fetch('/api/venues');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unknown error');
+      allVenues = data.venues;
+
+      const mismatchWarning = data.countMismatch
+        ? '<div class="err-box">WARNING - PAGINATION COUNT MISMATCH: expected ' + data.expectedCount + ' venues, only collected ' + data.actualCount + '. Some venues were likely missed during this fetch. Reload the page to re-query.</div>'
+        : '';
+      box.innerHTML = mismatchWarning;
+      renderVenues(allVenues);
+    } catch (e) {
+      box.innerHTML = '<div class="err-box">Failed to load venues: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function filterVenues() {
+    const term = document.getElementById('searchBox').value.trim().toLowerCase();
+    const filtered = term ? allVenues.filter(v => (v.name || '').toLowerCase().includes(term)) : allVenues;
+    renderVenues(filtered, true);
+  }
+
+  function renderVenues(venues, preserveWarning) {
+    const box = document.getElementById('venuesBox');
+    const existingWarning = preserveWarning ? '' : (box.querySelector('.err-box') ? box.querySelector('.err-box').outerHTML : '');
+
+    if (!venues || venues.length === 0) {
+      box.innerHTML = existingWarning + '<p class="muted">No venues found.</p>';
+      return;
+    }
+
+    const tableHtml = `
+      <p class="muted" style="margin-top:8px;">${venues.length} venue(s).</p>
+      <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Name</th><th>Venue UUID</th><th>Address</th><th># Subvenues</th></tr></thead>
+        <tbody>
+          ${venues.map(v => `
+            <tr class="venue-row" data-venue-id="${escapeHtml(v.venueId)}" onclick="loadSubvenues(${JSON.stringify(String(v.venueId))}, ${JSON.stringify(v.name || '')})">
+              <td>${escapeHtml(v.name || '')}</td>
+              <td style="font-size:11px;">${escapeHtml(v.venueId)}</td>
+              <td>${escapeHtml(v.address || '')}</td>
+              <td>${escapeHtml(v.subvenueCount ?? '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      </div>
+    `;
+
+    if (preserveWarning) {
+      const currentWarning = box.querySelector('.err-box') ? box.querySelector('.err-box').outerHTML : '';
+      box.innerHTML = currentWarning + tableHtml;
+    } else {
+      box.innerHTML = existingWarning + tableHtml;
+    }
+  }
+
+  async function loadSubvenues(venueId, venueName) {
+    document.querySelectorAll('.venue-row').forEach(row => row.classList.remove('selected'));
+    const clickedRow = document.querySelector(`.venue-row[data-venue-id="${CSS.escape(venueId)}"]`);
+    if (clickedRow) clickedRow.classList.add('selected');
+
+    const card = document.getElementById('subvenuesCard');
+    const box = document.getElementById('subvenuesBox');
+    const title = document.getElementById('subvenuesTitle');
+    card.style.display = 'block';
+    title.textContent = 'Subvenues — ' + venueName;
+    document.getElementById('subvenuesCsvLink').href = '/subvenues.csv?venueId=' + encodeURIComponent(venueId);
+    box.innerHTML = '<p class="muted">Loading subvenues...</p>';
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    try {
+      const res = await fetch('/api/subvenues?venueId=' + encodeURIComponent(venueId));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unknown error');
+
+      const mismatchWarning = data.countMismatch
+        ? '<div class="err-box">WARNING - PAGINATION COUNT MISMATCH: expected ' + data.expectedCount + ' subvenues, only collected ' + data.actualCount + '. Click the venue again to re-query.</div>'
+        : '';
+
+      if (!data.subvenues || data.subvenues.length === 0) {
+        box.innerHTML = mismatchWarning + '<p class="muted">No subvenues found for this venue.</p>';
+        return;
+      }
+
+      box.innerHTML = mismatchWarning + `
+        <p class="muted" style="margin-top:8px;">${data.subvenues.length} subvenue(s).</p>
+        <table>
+          <thead><tr><th>Field Name</th><th>Subvenue UUID</th></tr></thead>
+          <tbody>
+            ${data.subvenues.map(s => `
+              <tr>
+                <td>${escapeHtml(s.name || '')}</td>
+                <td style="font-size:11px;">${escapeHtml(s.id)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      box.innerHTML = '<div class="err-box">Failed to load subvenues: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  loadVenues();
+</script>
+</body>
+</html>
