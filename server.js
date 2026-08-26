@@ -313,6 +313,27 @@ async function fetchFullSchedule(fromOverride, toOverride) {
     if (page <= totalPages) await sleep(PAGE_DELAY_MS);
   } while (page <= totalPages);
 
+  // Deduplicate by event ID BEFORE counting - pagination drift (see
+  // conversation) can cause the same game to appear on two different page
+  // fetches. Deduping first, then comparing against expectedCount, means a
+  // genuine miss that duplicates happened to mask in the raw total gets
+  // correctly surfaced rather than hidden by the duplicates canceling it out.
+  const seenIds = new Set();
+  const dedupedEvents = [];
+  let duplicatesRemoved = 0;
+  for (const event of allEvents) {
+    if (seenIds.has(event.id)) {
+      duplicatesRemoved++;
+      continue;
+    }
+    seenIds.add(event.id);
+    dedupedEvents.push(event);
+  }
+  if (duplicatesRemoved > 0) {
+    console.warn(`[fetchFullSchedule] Removed ${duplicatesRemoved} duplicate event(s) (same UUID appeared on multiple pages - pagination drift).`);
+  }
+  allEvents = dedupedEvents;
+
   // Detect pagination drift: SportsEngine's own reported total (count) vs
   // what we actually collected across all pages. Offset/page-number-based
   // pagination (which this is) can drift under concurrent writes - see
@@ -414,6 +435,17 @@ function isWithinLast24h(isoString) {
   return new Date(isoString) > new Date(Date.now() - 24 * 60 * 60 * 1000);
 }
 
+function deriveGenderFromProgramName(primaryName) {
+  if (!primaryName) return null;
+  const lower = primaryName.toLowerCase();
+  // Check "women" FIRST - "Women" contains "men" as a substring
+  // (wo-MEN), so checking "men" first would misclassify every
+  // women's game if checked in the wrong order.
+  if (lower.includes('women')) return 'Women';
+  if (lower.includes('men')) return 'Men';
+  return null;
+}
+
 function extractGameInfo(event) {
   const teams = event.eventTeams || [];
   const home = teams.find((t) => t.homeTeam === true);
@@ -428,6 +460,15 @@ function extractGameInfo(event) {
   const divisionId = (home && home.team && home.team.divisionId) || (away && away.team && away.team.divisionId) || null;
   const divisionInfo = divisionId ? DIVISION_LOOKUP[divisionId] : null;
 
+  // Gender: primarily from program.primaryName (current season data,
+  // directly on every game - "College Club Soccer - Men/Women FA 2026"),
+  // NOT the hardcoded division lookup, which was built from an earlier
+  // season's stat app and can miss newly-added divisions. Falls back to
+  // the division lookup's gender only if primaryName parsing fails.
+  const programName = (home && home.team && home.team.program && home.team.program.primaryName)
+    || (away && away.team && away.team.program && away.team.program.primaryName) || null;
+  const gender = deriveGenderFromProgramName(programName) || (divisionInfo && divisionInfo.gender) || null;
+
   return {
     eventId: event.id,
     startTime: event.start || null,
@@ -440,7 +481,7 @@ function extractGameInfo(event) {
     awayTeamId: (away && away.team && away.team.id) || null,
     divisionId,
     divisionName: (divisionInfo && divisionInfo.name) || null,
-    gender: (divisionInfo && divisionInfo.gender) || null,
+    gender,
     seUpdatedAt: event.updated || null,
     seCreatedAt: event.created || null,
   };
