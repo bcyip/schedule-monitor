@@ -281,7 +281,13 @@ async function callGraphQLWithRetry(query, variables, maxAttempts = 3) {
       lastError = err;
       console.warn(`[poll] Page fetch attempt ${attempt}/${maxAttempts} failed: ${err.message}`);
       if (attempt < maxAttempts) {
-        const backoffMs = attempt * 3000; // 3s, 6s, ...
+        // Rate-limit errors need a much longer wait than a generic
+        // transient failure (502, network blip) - a short 3s/6s backoff
+        // was nowhere near enough to outlast an actual rate-limit window,
+        // which is why this kept recurring even with per-page retries.
+        const isRateLimit = /rate limit|too many requests/i.test(err.message);
+        const backoffMs = isRateLimit ? attempt * 20000 : attempt * 3000; // 20s/40s for rate limits, 3s/6s otherwise
+        console.warn(`[poll] Waiting ${backoffMs / 1000}s before retry (${isRateLimit ? 'rate limit' : 'generic'} backoff)...`);
         await sleep(backoffMs);
       }
     }
@@ -300,7 +306,7 @@ async function fetchFullScheduleOnce(fromOverride, toOverride) {
   let totalPages = 1;
   let expectedCount = null;
   const PER_PAGE = parseInt(process.env.EVENTS_PER_PAGE || '40', 10); // 100/page hit "complexity 201, max 101" - roughly 2 complexity/game, so 40 leaves real margin under the ~50 edge
-  const PAGE_DELAY_MS = parseInt(process.env.PAGE_DELAY_MS || '1000', 10); // bumped from 400ms after hitting confirmed TOO_MANY_REQUESTS from SportsEngine
+  const PAGE_DELAY_MS = parseInt(process.env.PAGE_DELAY_MS || '1500', 10); // bumped again after rate limits recurred even at 1000ms - see conversation
 
   do {
     const data = await callGraphQLWithRetry(EVENTS_QUERY, { orgId: SE_ORG_ID, from, to, page, perPage: PER_PAGE });
@@ -368,7 +374,10 @@ async function fetchFullSchedule(fromOverride, toOverride) {
     console.warn(`[fetchFullSchedule] Attempt ${attempt}/${MAX_ATTEMPTS} had a count mismatch (expected ${result.expectedCount}, got ${result.actualCount}).`);
     // Keep whichever attempt collected the MOST events, in case none match perfectly.
     if (!bestResult || result.actualCount > bestResult.actualCount) bestResult = result;
-    if (attempt < MAX_ATTEMPTS) await sleep(2000);
+    if (attempt < MAX_ATTEMPTS) {
+      console.warn(`[fetchFullSchedule] Waiting 30s before retrying the entire fetch, to avoid compounding any rate-limit pressure from the first attempt...`);
+      await sleep(30000);
+    }
   }
 
   console.warn(`[fetchFullSchedule] All ${MAX_ATTEMPTS} attempts had a mismatch - returning the best of them (${bestResult.actualCount} events). This may still be incomplete.`);
@@ -390,7 +399,7 @@ async function fetchAllVenues() {
     expectedCount = (data.venues && data.venues.pageInformation && data.venues.pageInformation.count) ?? expectedCount;
     console.log(`[fetchAllVenues] Fetched page ${page}/${totalPages} (${pageResults.length} venues)`);
     page++;
-    if (page <= totalPages) await sleep(parseInt(process.env.PAGE_DELAY_MS || '1000', 10));
+    if (page <= totalPages) await sleep(parseInt(process.env.PAGE_DELAY_MS || '1500', 10));
   } while (page <= totalPages);
 
   const seenVenueIds = new Set();
@@ -429,7 +438,7 @@ async function fetchSubvenuesForVenue(venueId) {
     totalPages = (data.subvenues && data.subvenues.pageInformation && data.subvenues.pageInformation.pages) || 1;
     expectedCount = (data.subvenues && data.subvenues.pageInformation && data.subvenues.pageInformation.count) ?? expectedCount;
     page++;
-    if (page <= totalPages) await sleep(parseInt(process.env.PAGE_DELAY_MS || '1000', 10));
+    if (page <= totalPages) await sleep(parseInt(process.env.PAGE_DELAY_MS || '1500', 10));
   } while (page <= totalPages);
 
   const seenSubvenueIds = new Set();
