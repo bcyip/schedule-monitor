@@ -366,6 +366,19 @@ async function fetchAllVenues() {
     if (page <= totalPages) await sleep(parseInt(process.env.PAGE_DELAY_MS || '1000', 10));
   } while (page <= totalPages);
 
+  const seenVenueIds = new Set();
+  const dedupedVenues = [];
+  let duplicatesRemoved = 0;
+  for (const v of allVenues) {
+    if (seenVenueIds.has(v.id)) { duplicatesRemoved++; continue; }
+    seenVenueIds.add(v.id);
+    dedupedVenues.push(v);
+  }
+  if (duplicatesRemoved > 0) {
+    console.warn(`[fetchAllVenues] Removed ${duplicatesRemoved} duplicate venue(s) (pagination drift).`);
+  }
+  allVenues = dedupedVenues;
+
   const actualCount = allVenues.length;
   const countMismatch = expectedCount != null && actualCount !== expectedCount;
   if (countMismatch) {
@@ -391,6 +404,19 @@ async function fetchSubvenuesForVenue(venueId) {
     page++;
     if (page <= totalPages) await sleep(parseInt(process.env.PAGE_DELAY_MS || '1000', 10));
   } while (page <= totalPages);
+
+  const seenSubvenueIds = new Set();
+  const dedupedSubvenues = [];
+  let duplicatesRemoved = 0;
+  for (const s of allSubvenues) {
+    if (seenSubvenueIds.has(s.id)) { duplicatesRemoved++; continue; }
+    seenSubvenueIds.add(s.id);
+    dedupedSubvenues.push(s);
+  }
+  if (duplicatesRemoved > 0) {
+    console.warn(`[fetchSubvenuesForVenue] Removed ${duplicatesRemoved} duplicate subvenue(s) for venue ${venueId} (pagination drift).`);
+  }
+  allSubvenues = dedupedSubvenues;
 
   const actualCount = allSubvenues.length;
   const countMismatch = expectedCount != null && actualCount !== expectedCount;
@@ -655,7 +681,10 @@ async function runPoll() {
 
   for (const event of events) {
     const info = extractGameInfo(event);
-    if (!info.eventId) continue;
+    if (!info.eventId) {
+      console.warn('[poll] Skipping an event with no ID at all - this should be extremely rare:', JSON.stringify(event).slice(0, 200));
+      continue;
+    }
 
     const updatedAt = info.seUpdatedAt ? new Date(info.seUpdatedAt) : null;
     const createdAt = info.seCreatedAt ? new Date(info.seCreatedAt) : null;
