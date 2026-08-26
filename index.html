@@ -52,7 +52,8 @@
     </div>
     <div id="columnToggles" style="display:flex; flex-wrap:wrap; gap:10px; margin:10px 0; font-size:12px; color:#5A6472;">
       <label><input type="checkbox" checked onchange="toggleColumn('detected', this.checked)"> Detected</label>
-      <label><input type="checkbox" checked onchange="toggleColumn('updated', this.checked)"> Updated SE</label>
+      <label><input type="checkbox" checked onchange="toggleColumn('updated', this.checked)"> Updated SE (UTC)</label>
+        <label><input type="checkbox" checked onchange="toggleColumn('updated-local', this.checked)"> Updated SE (Local)</label>
       <label><input type="checkbox" checked onchange="toggleColumn('uuid', this.checked)"> UUID</label>
       <label><input type="checkbox" checked onchange="toggleColumn('start', this.checked)"> Start</label>
       <label><input type="checkbox" checked onchange="toggleColumn('gender', this.checked)"> Gender</label>
@@ -125,7 +126,7 @@
       <div style="overflow-x:auto;">
       <table class="changes-table">
         <thead><tr>
-          <th data-col="detected">Detected (UTC)</th><th data-col="updated">Updated SE (UTC)</th><th data-col="uuid">UUID</th>
+          <th data-col="detected">Detected (UTC)</th><th data-col="updated">Updated SE (UTC)</th><th data-col="updated-local">Updated SE (Local)</th><th data-col="uuid">UUID</th>
           <th data-col="start">Start (Eastern)</th><th data-col="gender">Gender</th><th data-col="division">Division</th>
           <th data-col="location">Location</th><th data-col="home">Home</th><th data-col="away">Away</th>
         </tr></thead>
@@ -134,6 +135,7 @@
             <tr class="${c.is_new_game ? 'new-game' : ''}">
               <td data-col="detected">${formatUTC(c.detected_at)}</td>
               <td data-col="updated">${formatUTC(c.se_updated_at)}</td>
+              <td data-col="updated-local">${c.se_updated_at ? new Date(c.se_updated_at).toLocaleString() : ''}</td>
               <td data-col="uuid" style="font-size:10px;">${escapeHtml(c.event_id)}</td>
               <td data-col="start">${formatEastern(c.start_time)}</td>
               <td data-col="gender">${escapeHtml(c.gender || '')}</td>
