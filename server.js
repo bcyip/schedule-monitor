@@ -295,7 +295,15 @@ async function callGraphQLWithRetry(query, variables, maxAttempts = 3) {
   throw lastError;
 }
 
-async function fetchFullScheduleOnce(fromOverride, toOverride) {
+// Single attempt - a count mismatch is flagged (countMismatch/expectedCount/
+// actualCount) but NOT automatically retried here. Per-page failures (502s,
+// rate limits, network blips) still get retried via callGraphQLWithRetry
+// below, which this function calls for every page. Re-running the WHOLE
+// fetch on a count mismatch is a manual decision (Trigger Poll Now / Clear
+// & Re-poll / reload the schedule browser) rather than automatic, since a
+// full retry is slow and, given SportsEngine's own UI/API count
+// inconsistency (see conversation), isn't guaranteed to help anyway.
+async function fetchFullSchedule(fromOverride, toOverride) {
   const from = fromOverride || new Date().toISOString();
   const to = toOverride || (SEASON_END_DATE
     ? new Date(SEASON_END_DATE + 'T23:59:59.999Z').toISOString()
@@ -352,36 +360,6 @@ async function fetchFullScheduleOnce(fromOverride, toOverride) {
   }
 
   return { events: allEvents, expectedCount, actualCount, countMismatch };
-}
-
-// Public entry point: automatically retries the ENTIRE fetch (not just a
-// single failed page) up to 2 additional times if a count mismatch is
-// detected, since a fresh full pass may sidestep whatever transient drift
-// affected the first attempt. This does NOT fix a genuine inconsistency
-// between SportsEngine's own UI and API-reported counts (that's on their
-// end, not fixable by retrying) - it only reduces the risk of OUR fetch
-// falling short of whatever SportsEngine's API itself claims exists.
-async function fetchFullSchedule(fromOverride, toOverride) {
-  const MAX_ATTEMPTS = 3;
-  let bestResult = null;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const result = await fetchFullScheduleOnce(fromOverride, toOverride);
-    if (!result.countMismatch) {
-      if (attempt > 1) console.log(`[fetchFullSchedule] Attempt ${attempt} matched expected count cleanly.`);
-      return result;
-    }
-    console.warn(`[fetchFullSchedule] Attempt ${attempt}/${MAX_ATTEMPTS} had a count mismatch (expected ${result.expectedCount}, got ${result.actualCount}).`);
-    // Keep whichever attempt collected the MOST events, in case none match perfectly.
-    if (!bestResult || result.actualCount > bestResult.actualCount) bestResult = result;
-    if (attempt < MAX_ATTEMPTS) {
-      console.warn(`[fetchFullSchedule] Waiting 30s before retrying the entire fetch, to avoid compounding any rate-limit pressure from the first attempt...`);
-      await sleep(30000);
-    }
-  }
-
-  console.warn(`[fetchFullSchedule] All ${MAX_ATTEMPTS} attempts had a mismatch - returning the best of them (${bestResult.actualCount} events). This may still be incomplete.`);
-  return bestResult;
 }
 
 async function fetchAllVenues() {
