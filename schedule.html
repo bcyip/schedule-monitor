@@ -51,7 +51,7 @@
   <div class="card">
     <div style="display:flex; align-items:center; justify-content:space-between;">
       <h3 style="margin:0;">Results</h3>
-      <a href="#" id="csvLink" class="muted">Download CSV</a>
+      <a href="#" onclick="downloadScheduleCsv(); return false;" class="muted">Download CSV</a>
     </div>
     <div id="resultsBox">
       <p class="muted">Choose a date range (or leave blank for the full season) and click "Load Schedule".</p>
@@ -60,6 +60,7 @@
 </main>
 <script>
   let lastQuery = { from: '', to: '' };
+  let currentGames = [];
 
   async function loadSeasonWindowNote() {
     try {
@@ -103,7 +104,6 @@
     const params = new URLSearchParams();
     if (from) params.set('from', from);
     if (to) params.set('to', to);
-    document.getElementById('csvLink').href = '/schedule.csv' + (params.toString() ? '?' + params.toString() : '');
 
     loadBtn.disabled = true;
     fullBtn.disabled = true;
@@ -114,6 +114,7 @@
       const res = await fetch('/api/schedule' + (params.toString() ? '?' + params.toString() : ''));
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unknown error');
+      currentGames = data.games || [];
       renderResults(data.games, data.countMismatch, data.expectedCount, data.actualCount);
     } catch (e) {
       box.innerHTML = '<div class="err-box">Failed to load schedule: ' + escapeHtml(e.message) + '</div>';
@@ -172,6 +173,65 @@
   function formatEasternTime(isoString) {
     if (!isoString) return '';
     return new Date(isoString).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+  }
+
+  function formatUTCDate(isoString) {
+    if (!isoString) return '';
+    return new Date(isoString).toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+  }
+
+  function formatUTCTime(isoString) {
+    if (!isoString) return '';
+    return new Date(isoString).toLocaleTimeString('en-US', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' }) + ' UTC';
+  }
+
+  function csvEscape(val) {
+    if (val == null) return '';
+    const str = String(val);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  }
+
+  function downloadScheduleCsv() {
+    if (!currentGames || currentGames.length === 0) {
+      alert('No schedule loaded yet - click "Load Schedule" or "Load Full Season" first.');
+      return;
+    }
+
+    const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
+    const lines = [header.join(',')];
+    for (const g of currentGames) {
+      lines.push([
+        csvEscape(g.eventId),
+        csvEscape(formatUTCDate(g.startTime)),
+        csvEscape(formatUTCTime(g.startTime)),
+        csvEscape(formatEasternDate(g.startTime)),
+        csvEscape(formatEasternTime(g.startTime)),
+        csvEscape(g.gender),
+        csvEscape(g.divisionName),
+        csvEscape(g.divisionId),
+        csvEscape(g.locationName),
+        csvEscape(g.subvenueId),
+        csvEscape(g.venueId),
+        csvEscape(g.homeTeam),
+        csvEscape(g.homeTeamId),
+        csvEscape(g.awayTeam),
+        csvEscape(g.awayTeamId),
+      ].join(','));
+    }
+
+    const csvContent = lines.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'schedule.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   function escapeHtml(str) {
