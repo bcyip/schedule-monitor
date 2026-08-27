@@ -751,13 +751,29 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // GET /changes — list recorded changes as JSON, optionally filtered with ?since=<ISO date>
+  // GET /changes — list recorded changes as JSON, optionally filtered with
+  // ?since=<ISO date>. Shows only the LATEST change per event_id within the
+  // window - if a game changed multiple times in the same 24h period, all
+  // of those rows remain permanently in the database (full audit trail
+  // preserved), but only the most recent one displays here.
   if (req.method === 'GET' && url.pathname === '/changes') {
     try {
       const since = url.searchParams.get('since');
       const result = since
-        ? await pool.query('SELECT * FROM schedule_changes WHERE detected_at >= $1 ORDER BY detected_at DESC', [since])
-        : await pool.query('SELECT * FROM schedule_changes ORDER BY detected_at DESC LIMIT 500');
+        ? await pool.query(
+            `SELECT * FROM (
+               SELECT DISTINCT ON (event_id) * FROM schedule_changes
+               WHERE detected_at >= $1
+               ORDER BY event_id, detected_at DESC
+             ) sub ORDER BY detected_at DESC`,
+            [since]
+          )
+        : await pool.query(
+            `SELECT * FROM (
+               SELECT DISTINCT ON (event_id) * FROM schedule_changes
+               ORDER BY event_id, detected_at DESC
+             ) sub ORDER BY detected_at DESC LIMIT 500`
+          );
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ changes: result.rows }));
     } catch (err) {
@@ -771,8 +787,20 @@ const server = http.createServer(async (req, res) => {
     try {
       const since = url.searchParams.get('since');
       const result = since
-        ? await pool.query('SELECT * FROM schedule_changes WHERE detected_at >= $1 ORDER BY detected_at DESC', [since])
-        : await pool.query('SELECT * FROM schedule_changes ORDER BY detected_at DESC LIMIT 500');
+        ? await pool.query(
+            `SELECT * FROM (
+               SELECT DISTINCT ON (event_id) * FROM schedule_changes
+               WHERE detected_at >= $1
+               ORDER BY event_id, detected_at DESC
+             ) sub ORDER BY detected_at DESC`,
+            [since]
+          )
+        : await pool.query(
+            `SELECT * FROM (
+               SELECT DISTINCT ON (event_id) * FROM schedule_changes
+               ORDER BY event_id, detected_at DESC
+             ) sub ORDER BY detected_at DESC LIMIT 500`
+          );
       const csv = generateCsv(result.rows);
       res.writeHead(200, {
         'Content-Type': 'text/csv',
