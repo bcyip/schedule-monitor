@@ -28,6 +28,10 @@
 //                                through the real season end, never drifting past it or
 //                                falling short. Takes priority over POLL_WINDOW_DAYS if set.
 //   POLL_WINDOW_DAYS          - (optional) fallback only, used if SEASON_END_DATE isn't set - defaults to 100
+//   POLL_BASELINE_START       - (optional) e.g. "2026-08-27T07:00:00.000Z" - never look
+//                                for changes before this fixed point, regardless of the
+//                                rolling 24h window. Set to empty string to disable and
+//                                always use a strict rolling 24h window.
 //   CLEAR_REPOLL_PASSWORD     - required to use the destructive "Clear & Re-poll"
 //                                action - fails closed (disabled) if unset
 //   PORT                      - usually set automatically by the host
@@ -49,6 +53,12 @@ const SE_ORG_ID = parseInt(process.env.SE_ORG_ID, 10);
 const POLL_INTERVAL_HOURS = parseFloat(process.env.POLL_INTERVAL_HOURS || '8');
 const POLL_WINDOW_DAYS = parseInt(process.env.POLL_WINDOW_DAYS || '100', 10); // fallback only - covers this season's Nov 15, 2026 end (87 days out as of Aug 20) with real margin
 const SEASON_END_DATE = process.env.SEASON_END_DATE || null; // e.g. "2026-11-15" - preferred over POLL_WINDOW_DAYS
+// Fixed anchor: never look for changes before this point, regardless of
+// the rolling 24h window. Right after this date, the effective window is
+// SHORTER than 24h (anchor to now); once more than 24h has passed since
+// the anchor, this has no effect and behavior is just the normal rolling
+// 24h window. Set to null to disable and always use a strict rolling 24h.
+const POLL_BASELINE_START = process.env.POLL_BASELINE_START || '2026-08-27T07:00:00.000Z';
 
 // ---------- Postgres ----------
 
@@ -679,7 +689,13 @@ async function recordPollFailure(errorMessage) {
 
 async function runPoll() {
   console.log('[poll] Starting schedule poll...');
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const rolling24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const baselineStart = POLL_BASELINE_START ? new Date(POLL_BASELINE_START) : null;
+  // Whichever is LATER (more recent) wins - right after the anchor, this
+  // is the anchor itself (a window shorter than 24h); once 24h+ has passed
+  // since the anchor, rolling24h is later and this is just a normal
+  // rolling 24h window, same as before.
+  const since = (baselineStart && baselineStart > rolling24h) ? baselineStart : rolling24h;
 
   let events, countMismatch, expectedCount, actualCount;
   try {
