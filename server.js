@@ -781,14 +781,14 @@ const server = http.createServer(async (req, res) => {
                SELECT DISTINCT ON (event_id) * FROM schedule_changes
                WHERE detected_at >= $1
                ORDER BY event_id, detected_at DESC
-             ) sub ORDER BY detected_at DESC`,
+             ) sub ORDER BY se_updated_at DESC`,
             [since]
           )
         : await pool.query(
             `SELECT * FROM (
                SELECT DISTINCT ON (event_id) * FROM schedule_changes
                ORDER BY event_id, detected_at DESC
-             ) sub ORDER BY detected_at DESC LIMIT 500`
+             ) sub ORDER BY se_updated_at DESC LIMIT 500`
           );
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ changes: result.rows }));
@@ -808,14 +808,14 @@ const server = http.createServer(async (req, res) => {
                SELECT DISTINCT ON (event_id) * FROM schedule_changes
                WHERE detected_at >= $1
                ORDER BY event_id, detected_at DESC
-             ) sub ORDER BY detected_at DESC`,
+             ) sub ORDER BY se_updated_at DESC`,
             [since]
           )
         : await pool.query(
             `SELECT * FROM (
                SELECT DISTINCT ON (event_id) * FROM schedule_changes
                ORDER BY event_id, detected_at DESC
-             ) sub ORDER BY detected_at DESC LIMIT 500`
+             ) sub ORDER BY se_updated_at DESC LIMIT 500`
           );
       const csv = generateCsv(result.rows);
       res.writeHead(200, {
