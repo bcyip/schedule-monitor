@@ -53,6 +53,9 @@
       <h3 style="margin:0;">Results</h3>
       <a href="#" onclick="downloadScheduleCsv(); return false;" class="muted">Download CSV</a>
     </div>
+    <div style="margin:10px 0; font-size:13px;">
+      <label><input type="checkbox" id="hideOzark" onchange="onOzarkToggleChanged()"> Hide Ozark divisions (Men &amp; Women) from results below</label>
+    </div>
     <div id="resultsBox">
       <p class="muted">Choose a date range (or leave blank for the full season) and click "Load Schedule".</p>
     </div>
@@ -61,6 +64,15 @@
 <script>
   let lastQuery = { from: '', to: '' };
   let currentGames = [];
+
+  function getFilteredGames() {
+    const hideOzark = document.getElementById('hideOzark').checked;
+    return hideOzark ? currentGames.filter(g => g.divisionName !== 'Ozark') : currentGames;
+  }
+
+  function onOzarkToggleChanged() {
+    renderResults(getFilteredGames(), null, null, null); // re-render with current filter, no fresh mismatch data since this isn't a new fetch
+  }
 
   async function loadSeasonWindowNote() {
     try {
@@ -115,7 +127,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unknown error');
       currentGames = data.games || [];
-      renderResults(data.games, data.countMismatch, data.expectedCount, data.actualCount);
+      renderResults(getFilteredGames(), data.countMismatch, data.expectedCount, data.actualCount);
     } catch (e) {
       box.innerHTML = '<div class="err-box">Failed to load schedule: ' + escapeHtml(e.message) + '</div>';
     } finally {
@@ -195,14 +207,15 @@
   }
 
   function downloadScheduleCsv() {
-    if (!currentGames || currentGames.length === 0) {
+    const games = getFilteredGames();
+    if (!games || games.length === 0) {
       alert('No schedule loaded yet - click "Load Schedule" or "Load Full Season" first.');
       return;
     }
 
     const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
     const lines = [header.join(',')];
-    for (const g of currentGames) {
+    for (const g of games) {
       lines.push([
         csvEscape(g.eventId),
         csvEscape(formatUTCDate(g.startTime)),

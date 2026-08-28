@@ -48,7 +48,10 @@
   <div class="card">
     <div style="display:flex; align-items:center; justify-content:space-between;">
       <h3 style="margin:0;">Changes Detected — Last 24 Hours</h3>
-      <a href="#" id="csvLink" class="muted">Download CSV</a>
+      <a href="#" onclick="downloadChangesCsv(); return false;" class="muted">Download CSV</a>
+    </div>
+    <div style="margin:10px 0; font-size:13px;">
+      <label><input type="checkbox" id="hideOzark" onchange="renderChanges()"> Hide Ozark divisions (Men &amp; Women)</label>
     </div>
     <div id="columnToggles" style="display:flex; flex-wrap:wrap; gap:10px; margin:10px 0; font-size:12px; color:#5A6472;">
       <label><input type="checkbox" checked onchange="toggleColumn('detected', this.checked)"> Detected</label>
@@ -110,18 +113,30 @@
     return isNewCompletion;
   }
 
+  let allChanges = []; // unfiltered, as fetched - the Ozark toggle filters a copy of this
+
   async function loadChanges() {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    document.getElementById('csvLink').href = '/changes.csv?since=' + encodeURIComponent(since);
     const res = await fetch('/changes?since=' + encodeURIComponent(since));
     const data = await res.json();
+    allChanges = data.changes || [];
+    renderChanges();
+  }
+
+  function getFilteredChanges() {
+    const hideOzark = document.getElementById('hideOzark').checked;
+    return hideOzark ? allChanges.filter(c => c.division_name !== 'Ozark') : allChanges;
+  }
+
+  function renderChanges() {
+    const changes = getFilteredChanges();
     const box = document.getElementById('changesBox');
-    if (!data.changes || data.changes.length === 0) {
+    if (!changes || changes.length === 0) {
       box.innerHTML = '<p class="muted">No changes detected in the last 24 hours.</p>';
       return;
     }
     box.innerHTML = `
-      <p class="muted" style="margin-top:0;">${data.changes.length} total changes detected in last 24h</p>
+      <p class="muted" style="margin-top:0;">${changes.length} total changes detected in last 24h</p>
       <p class="muted" style="margin-top:-4px;">🟠 Orange rows = a genuinely new game added to the schedule (caught via <code>created</code>, not just <code>updated</code>)</p>
       <div style="overflow-x:auto;">
       <table class="changes-table">
@@ -131,7 +146,7 @@
           <th data-col="location">Location</th><th data-col="home">Home</th><th data-col="away">Away</th>
         </tr></thead>
         <tbody>
-          ${data.changes.map(c => `
+          ${changes.map(c => `
             <tr class="${c.is_new_game ? 'new-game' : ''}">
               <td data-col="detected">${formatUTC(c.detected_at)}</td>
               <td data-col="updated">${formatUTC(c.se_updated_at)}</td>
@@ -150,6 +165,48 @@
       </div>
     `;
     applyColumnVisibility();
+  }
+
+  function downloadChangesCsv() {
+    const changes = getFilteredChanges();
+    if (!changes || changes.length === 0) {
+      alert('No changes to export.');
+      return;
+    }
+    const header = ['Detected (UTC)', 'Updated SE (UTC)', 'UUID', 'Start (Eastern)', 'Gender', 'Division', 'Location', 'Home', 'Away'];
+    const lines = [header.join(',')];
+    for (const c of changes) {
+      lines.push([
+        csvEscapeLocal(formatUTC(c.detected_at)),
+        csvEscapeLocal(formatUTC(c.se_updated_at)),
+        csvEscapeLocal(c.event_id),
+        csvEscapeLocal(formatEastern(c.start_time)),
+        csvEscapeLocal(c.gender),
+        csvEscapeLocal(c.division_name),
+        csvEscapeLocal(c.location_name),
+        csvEscapeLocal(c.home_team),
+        csvEscapeLocal(c.away_team),
+      ].join(','));
+    }
+    const csvContent = lines.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'schedule-changes.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function csvEscapeLocal(val) {
+    if (val == null) return '';
+    const str = String(val);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
   }
 
   async function triggerPoll() {

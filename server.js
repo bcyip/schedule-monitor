@@ -180,7 +180,7 @@ const DIVISION_LOOKUP = {
   '6a0cb110cdb76433cc151485': { name: 'Midwest North', gender: 'Men' },
   '6a0e070026aee3f6e43b446f': { name: 'Midwest North II', gender: 'Men' },
   '6a0e0700cdb76416601513ae': { name: 'Midwest South', gender: 'Men' },
-  '6a4e96e46b8d1e01201ee2ce': { name: 'Midwest South II', gender: 'Men' },
+  '6a4e96e46b8d1e01201ee2ce': { name: 'Ozark', gender: 'Men' }, // formerly 'Midwest South II' - same division ID, renamed
   '6a44397409f29192050500f1': { name: 'NC East', gender: 'Men' },
   '6a4439744e42a29553c7fe6c': { name: 'NC West', gender: 'Men' },
   '6a4439743c1d137b18c8db12': { name: 'New England Central', gender: 'Men' },
