@@ -40,6 +40,9 @@
     <div style="display:flex; align-items:center; justify-content:space-between;">
       <h3 style="margin:0;">Status</h3>
       <button id="triggerBtn" onclick="triggerPoll()">Trigger Poll Now</button>
+      <label style="margin-left:10px; font-size:12px; color:#5A6472;">
+        Lookback (hrs, optional): <input type="number" id="lookbackHours" placeholder="24" min="1" style="width:60px; padding:4px 6px;" />
+      </label>
       <button id="clearBtn" class="secondary" onclick="clearAndRepoll()" style="margin-left:8px;">Clear &amp; Re-poll</button>
     </div>
     <div id="statusBox" style="margin-top:14px;">Loading...</div>
@@ -214,10 +217,12 @@
 
   async function triggerPoll() {
     const btn = document.getElementById('triggerBtn');
+    const lookback = document.getElementById('lookbackHours').value.trim();
     btn.disabled = true;
     btn.textContent = 'Polling...';
     try {
-      const res = await fetch('/trigger-poll', { method: 'POST' });
+      const url = '/trigger-poll' + (lookback ? '?lookbackHours=' + encodeURIComponent(lookback) : '');
+      const res = await fetch(url, { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Unknown error');
       await loadStatus();

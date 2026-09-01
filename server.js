@@ -691,15 +691,19 @@ async function recordPollFailure(errorMessage) {
 // onto the event object - so this WILL report some false positives when
 // that happens. Chosen deliberately over field-diffing for simplicity.
 
-async function runPoll() {
+async function runPoll(lookbackHoursOverride) {
   console.log('[poll] Starting schedule poll...');
-  const rolling24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const lookbackHours = lookbackHoursOverride && lookbackHoursOverride > 0 ? lookbackHoursOverride : 24;
+  const rollingWindow = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
   const baselineStart = POLL_BASELINE_START ? new Date(POLL_BASELINE_START) : null;
   // Whichever is LATER (more recent) wins - right after the anchor, this
-  // is the anchor itself (a window shorter than 24h); once 24h+ has passed
-  // since the anchor, rolling24h is later and this is just a normal
-  // rolling 24h window, same as before.
-  const since = (baselineStart && baselineStart > rolling24h) ? baselineStart : rolling24h;
+  // is the anchor itself (a window shorter than the lookback); once the
+  // lookback period has passed since the anchor, rollingWindow is later
+  // and this is just a normal rolling window, same as before.
+  const since = (baselineStart && baselineStart > rollingWindow) ? baselineStart : rollingWindow;
+  if (lookbackHours !== 24) {
+    console.log(`[poll] Using a CUSTOM lookback of ${lookbackHours}h for this run (not the normal 24h).`);
+  }
 
   let events, countMismatch, expectedCount, actualCount;
   try {
@@ -840,9 +844,13 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // POST /trigger-poll — manual trigger, for testing without waiting for the schedule
+  // POST /trigger-poll?lookbackHours=X — manual trigger, for testing without
+  // waiting for the schedule. lookbackHours optionally widens the window
+  // for just this one run (diagnostic use - see conversation), defaults to
+  // the normal 24h if omitted.
   if (req.method === 'POST' && url.pathname === '/trigger-poll') {
-    runPoll()
+    const lookbackHours = parseFloat(url.searchParams.get('lookbackHours'));
+    runPoll(lookbackHours)
       .then(() => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
