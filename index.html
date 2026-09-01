@@ -59,6 +59,7 @@
         <label><input type="checkbox" checked onchange="toggleColumn('updated-local', this.checked)"> Updated SE (Local)</label>
       <label><input type="checkbox" checked onchange="toggleColumn('uuid', this.checked)"> UUID</label>
       <label><input type="checkbox" checked onchange="toggleColumn('start', this.checked)"> Start</label>
+        <label><input type="checkbox" checked onchange="toggleColumn('gameStatus', this.checked)"> Game Status</label>
       <label><input type="checkbox" checked onchange="toggleColumn('gender', this.checked)"> Gender</label>
       <label><input type="checkbox" checked onchange="toggleColumn('division', this.checked)"> Division</label>
       <label><input type="checkbox" checked onchange="toggleColumn('location', this.checked)"> Location</label>
@@ -142,7 +143,7 @@
       <table class="changes-table">
         <thead><tr>
           <th data-col="detected">Detected (UTC)</th><th data-col="updated">Updated SE (UTC)</th><th data-col="updated-local">Updated SE (Local)</th><th data-col="uuid">UUID</th>
-          <th data-col="start">Start (Eastern)</th><th data-col="gender">Gender</th><th data-col="division">Division</th>
+          <th data-col="start">Start (Eastern)</th><th data-col="gameStatus">Game Status</th><th data-col="gender">Gender</th><th data-col="division">Division</th>
           <th data-col="location">Location</th><th data-col="home">Home</th><th data-col="away">Away</th>
         </tr></thead>
         <tbody>
@@ -153,6 +154,7 @@
               <td data-col="updated-local">${c.se_updated_at ? new Date(c.se_updated_at).toLocaleString() : ''}</td>
               <td data-col="uuid" style="font-size:10px;">${escapeHtml(c.event_id)}</td>
               <td data-col="start">${formatEastern(c.start_time)}</td>
+              <td data-col="gameStatus">${escapeHtml(c.game_status || '')}</td>
               <td data-col="gender">${escapeHtml(c.gender || '')}</td>
               <td data-col="division">${escapeHtml(c.division_name || '')}</td>
               <td data-col="location">${escapeHtml(c.location_name || '')}</td>
@@ -173,7 +175,7 @@
       alert('No changes to export.');
       return;
     }
-    const header = ['Detected (UTC)', 'Updated SE (UTC)', 'UUID', 'Start (Eastern)', 'Gender', 'Division', 'Location', 'Home', 'Away'];
+    const header = ['Detected (UTC)', 'Updated SE (UTC)', 'UUID', 'Start (Eastern)', 'Game Status', 'Gender', 'Division', 'Location', 'Home', 'Away'];
     const lines = [header.join(',')];
     for (const c of changes) {
       lines.push([
@@ -181,6 +183,7 @@
         csvEscapeLocal(formatUTC(c.se_updated_at)),
         csvEscapeLocal(c.event_id),
         csvEscapeLocal(formatEastern(c.start_time)),
+        csvEscapeLocal(c.game_status),
         csvEscapeLocal(c.gender),
         csvEscapeLocal(c.division_name),
         csvEscapeLocal(c.location_name),

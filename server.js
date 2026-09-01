@@ -237,6 +237,7 @@ const EVENTS_QUERY = `
         subvenueId
         updated
         created
+        gameStatus
       }
       pageInformation { count page pages }
     }
@@ -534,6 +535,7 @@ function extractGameInfo(event) {
     gender,
     seUpdatedAt: event.updated || null,
     seCreatedAt: event.created || null,
+    gameStatus: event.gameStatus || null,
   };
 }
 
@@ -565,7 +567,7 @@ function formatEasternParts(isoString) {
 }
 
 function generateCsv(changes) {
-  const header = ['UUID', 'New Game', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Created (UTC)', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
+  const header = ['UUID', 'New Game', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Created (UTC)', 'Game Status', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
   const lines = [header.join(',')];
   for (const c of changes) {
     const utc = formatUTCParts(c.start_time);
@@ -579,6 +581,7 @@ function generateCsv(changes) {
       csvEscape(eastern.date),
       csvEscape(eastern.time),
       csvEscape(created.date + ' ' + created.time),
+      csvEscape(c.game_status),
       csvEscape(c.gender),
       csvEscape(c.division_name),
       csvEscape(c.division_id),
@@ -599,7 +602,7 @@ function generateCsv(changes) {
 // directly on extractGameInfo's output (camelCase) for the raw schedule browser,
 // which has no "change" concept at all - just the current state of every game.
 function generateScheduleCsv(games) {
-  const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
+  const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Game Status', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
   const lines = [header.join(',')];
   for (const g of games) {
     const utc = formatUTCParts(g.startTime);
@@ -610,6 +613,7 @@ function generateScheduleCsv(games) {
       csvEscape(utc.time),
       csvEscape(eastern.date),
       csvEscape(eastern.time),
+      csvEscape(g.gameStatus),
       csvEscape(g.gender),
       csvEscape(g.divisionName),
       csvEscape(g.divisionId),
@@ -728,11 +732,11 @@ async function runPoll() {
     if (!updatedRecently && !createdRecently) continue; // neither signal is recent - skip
 
     const result = await pool.query(
-      `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, home_team_id, away_team_id, division_id, division_name, gender, se_updated_at, se_created_at, is_new_game)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-       ON CONFLICT (event_id, start_time, location_name, home_team, away_team) DO NOTHING
+      `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, home_team_id, away_team_id, division_id, division_name, gender, se_updated_at, se_created_at, is_new_game, game_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       ON CONFLICT (event_id, start_time, location_name, home_team, away_team, game_status) DO NOTHING
        RETURNING id`,
-      [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.homeTeamId, info.awayTeamId, info.divisionId, info.divisionName, info.gender, info.seUpdatedAt, info.seCreatedAt, createdRecently]
+      [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.homeTeamId, info.awayTeamId, info.divisionId, info.divisionName, info.gender, info.seUpdatedAt, info.seCreatedAt, createdRecently, info.gameStatus]
     );
     if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
   }

@@ -155,7 +155,7 @@
       <div style="overflow-x:auto;">
       <table>
         <thead><tr>
-          <th>Date (Eastern)</th><th>Time (Eastern)</th><th>UUID</th><th>Gender</th><th>Division</th>
+          <th>Date (Eastern)</th><th>Time (Eastern)</th><th>UUID</th><th>Game Status</th><th>Gender</th><th>Division</th>
           <th>Location</th><th>Home</th><th>Away</th>
         </tr></thead>
         <tbody>
@@ -164,6 +164,7 @@
               <td>${formatEasternDate(g.startTime)}</td>
               <td>${formatEasternTime(g.startTime)}</td>
               <td style="font-size:10px;">${escapeHtml(g.eventId)}</td>
+              <td>${escapeHtml(g.gameStatus || '')}</td>
               <td>${escapeHtml(g.gender || '')}</td>
               <td>${escapeHtml(g.divisionName || '')}</td>
               <td>${escapeHtml(g.locationName || '')}</td>
@@ -213,7 +214,7 @@
       return;
     }
 
-    const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
+    const header = ['UUID', 'Date (UTC)', 'Time (UTC)', 'Date (Eastern)', 'Time (Eastern)', 'Game Status', 'Gender', 'Division', 'Division UUID', 'Location', 'Subvenue UUID', 'Venue UUID', 'Home Team', 'Home Team UUID', 'Away Team', 'Away Team UUID'];
     const lines = [header.join(',')];
     for (const g of games) {
       lines.push([
@@ -222,6 +223,7 @@
         csvEscape(formatUTCTime(g.startTime)),
         csvEscape(formatEasternDate(g.startTime)),
         csvEscape(formatEasternTime(g.startTime)),
+        csvEscape(g.gameStatus),
         csvEscape(g.gender),
         csvEscape(g.divisionName),
         csvEscape(g.divisionId),
