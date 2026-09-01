@@ -731,14 +731,21 @@ async function runPoll() {
     const createdRecently = createdAt && createdAt > since;
     if (!updatedRecently && !createdRecently) continue; // neither signal is recent - skip
 
-    const result = await pool.query(
-      `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, home_team_id, away_team_id, division_id, division_name, gender, se_updated_at, se_created_at, is_new_game, game_status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-       ON CONFLICT (event_id, start_time, location_name, home_team, away_team, game_status) DO NOTHING
-       RETURNING id`,
-      [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.homeTeamId, info.awayTeamId, info.divisionId, info.divisionName, info.gender, info.seUpdatedAt, info.seCreatedAt, createdRecently, info.gameStatus]
-    );
-    if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
+    try {
+      const result = await pool.query(
+        `INSERT INTO schedule_changes (event_id, start_time, location_name, subvenue_id, venue_id, home_team, away_team, home_team_id, away_team_id, division_id, division_name, gender, se_updated_at, se_created_at, is_new_game, game_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         ON CONFLICT (event_id, start_time, location_name, home_team, away_team, game_status) DO NOTHING
+         RETURNING id`,
+        [info.eventId, info.startTime, info.locationName, info.subvenueId, info.venueId, info.homeTeam, info.awayTeam, info.homeTeamId, info.awayTeamId, info.divisionId, info.divisionName, info.gender, info.seUpdatedAt, info.seCreatedAt, createdRecently, info.gameStatus]
+      );
+      if (result.rowCount > 0) changeCount++; // only counts genuinely new rows, not skipped duplicates
+    } catch (err) {
+      // A single bad insert (schema mismatch, transient DB error, anything)
+      // must never crash the whole poll or take down the process - log it
+      // clearly and keep processing the rest of the games in this run.
+      console.error(`[poll] Failed to insert change for event ${info.eventId}:`, err.message);
+    }
   }
 
   await recordPollSuccess(changeCount, countMismatch, expectedCount, actualCount);
@@ -1059,6 +1066,8 @@ server.listen(PORT, async () => {
     }
   }
 
-  runPoll(); // run once on startup
-  setInterval(runPoll, POLL_INTERVAL_HOURS * 60 * 60 * 1000);
+  runPoll().catch((err) => console.error('[poll] Uncaught error during startup poll (did not crash the process):', err.message)); // run once on startup
+  setInterval(() => {
+    runPoll().catch((err) => console.error('[poll] Uncaught error during scheduled poll (did not crash the process):', err.message));
+  }, POLL_INTERVAL_HOURS * 60 * 60 * 1000);
 });
